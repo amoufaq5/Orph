@@ -1,0 +1,31 @@
+# Core NLP & Transformers
+transformers==4.38.2
+datasets==2.19.1
+scispacy==0.5.1
+spacy==3.4.4
+https://s3-us-west-2.amazonaws.com/ai2-s2-scispacy/releases/v0.5.1/en_core_sci_sm-0.5.1.tar.gz
+
+# Data processing
+pandas==2.2.3
+numpy
+tqdm
+
+# Deep learning (PyTorch + torchvision)
+torch==2.2.1
+torchvision==0.17.1
+
+# Image processing
+matplotlib==3.8.4
+Pillow==10.3.0
+
+# API and PDF
+flask==3.0.3
+jsPDF==2.5.1  # frontend only (JS lib, noted for clarity)
+
+# Web scraping
+requests
+beautifulsoup4
+
+# Optional for notebook development
+jupyter
+ipykernel
