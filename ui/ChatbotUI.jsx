@@ -1,4 +1,4 @@
-// ChatbotUI.jsx with File Upload, Chat History, PDF Export, and Profile Login
+// ChatbotUI.jsx with Grad-CAM display, file upload, history, login, and PDF export
 import { useState, useEffect } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -15,6 +15,7 @@ export default function ChatbotUI() {
   const [username, setUsername] = useState("");
   const [loggedIn, setLoggedIn] = useState(false);
   const [file, setFile] = useState(null);
+  const [heatmapUrl, setHeatmapUrl] = useState(null);
 
   useEffect(() => {
     const savedChat = localStorage.getItem(CHAT_HISTORY_KEY);
@@ -51,6 +52,9 @@ export default function ChatbotUI() {
       });
       const data = await res.json();
       setMessages((prev) => [...prev, { sender: "bot", text: data.response }]);
+      if (data.heatmap) {
+        setHeatmapUrl(`http://localhost:8080${data.heatmap}`);
+      }
     } catch (err) {
       setMessages((prev) => [...prev, { sender: "bot", text: "Error getting response." }]);
     }
@@ -63,6 +67,7 @@ export default function ChatbotUI() {
   const handleClear = () => {
     setMessages([]);
     localStorage.removeItem(CHAT_HISTORY_KEY);
+    setHeatmapUrl(null);
   };
 
   const handleExportPDF = () => {
@@ -107,9 +112,7 @@ export default function ChatbotUI() {
       ) : (
         <div className="mb-4 flex gap-2 items-center">
           <span className="font-medium">Welcome, {username}</span>
-          <Button variant="outline" onClick={handleLogout}>
-            Logout
-          </Button>
+          <Button variant="outline" onClick={handleLogout}>Logout</Button>
         </div>
       )}
 
@@ -125,6 +128,12 @@ export default function ChatbotUI() {
               {msg.text}
             </div>
           ))}
+          {heatmapUrl && (
+            <div className="mt-4">
+              <p className="text-sm text-gray-600">Grad-CAM Heatmap:</p>
+              <img src={heatmapUrl} alt="Heatmap" className="mt-2 rounded-xl border" />
+            </div>
+          )}
         </CardContent>
       </Card>
 
