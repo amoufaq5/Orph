@@ -18,14 +18,13 @@ torchvision==0.17.1
 matplotlib==3.8.4
 Pillow==10.3.0
 
-# API and PDF
+# API
 flask==3.0.3
-jsPDF==2.5.1  # frontend only (JS lib, noted for clarity)
 
 # Web scraping
 requests
 beautifulsoup4
 
-# Optional for notebook development
+# Optional (dev tools)
 jupyter
 ipykernel
