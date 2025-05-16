@@ -1,4 +1,4 @@
-// ChatbotUI.jsx with Chat History, PDF Export, and Profile Login
+// ChatbotUI.jsx with File Upload, Chat History, PDF Export, and Profile Login
 import { useState, useEffect } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -14,6 +14,7 @@ export default function ChatbotUI() {
   const [loading, setLoading] = useState(false);
   const [username, setUsername] = useState("");
   const [loggedIn, setLoggedIn] = useState(false);
+  const [file, setFile] = useState(null);
 
   useEffect(() => {
     const savedChat = localStorage.getItem(CHAT_HISTORY_KEY);
@@ -30,15 +31,23 @@ export default function ChatbotUI() {
   }, [messages]);
 
   const handleSend = async () => {
-    if (!input.trim()) return;
-    setMessages((prev) => [...prev, { sender: "user", text: input }]);
+    if (!input.trim() && !file) return;
+    if (input.trim()) {
+      setMessages((prev) => [...prev, { sender: "user", text: input }]);
+    }
+    if (file) {
+      setMessages((prev) => [...prev, { sender: "user", text: `Uploaded file: ${file.name}` }]);
+    }
     setLoading(true);
 
     try {
+      const formData = new FormData();
+      if (input.trim()) formData.append("input", input);
+      if (file) formData.append("file", file);
+
       const res = await fetch("http://localhost:8080/chat", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ input }),
+        body: formData,
       });
       const data = await res.json();
       setMessages((prev) => [...prev, { sender: "bot", text: data.response }]);
@@ -47,6 +56,7 @@ export default function ChatbotUI() {
     }
 
     setInput("");
+    setFile(null);
     setLoading(false);
   };
 
@@ -118,22 +128,30 @@ export default function ChatbotUI() {
         </CardContent>
       </Card>
 
-      <div className="flex w-full max-w-xl mt-4 gap-2">
+      <div className="flex w-full max-w-xl mt-4 flex-col gap-2">
         <Input
-          placeholder="Enter symptoms..."
+          placeholder="Enter symptoms or notes..."
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && handleSend()}
         />
-        <Button onClick={handleSend} disabled={loading}>
-          {loading ? "Thinking..." : "Send"}
-        </Button>
-        <Button variant="outline" onClick={handleClear}>
-          Clear
-        </Button>
-        <Button variant="secondary" onClick={handleExportPDF}>
-          Export PDF
-        </Button>
+        <input
+          type="file"
+          accept="image/*,.pdf,.txt"
+          onChange={(e) => setFile(e.target.files[0])}
+          className="block border rounded p-2 bg-white"
+        />
+        <div className="flex gap-2">
+          <Button onClick={handleSend} disabled={loading}>
+            {loading ? "Thinking..." : "Send"}
+          </Button>
+          <Button variant="outline" onClick={handleClear}>
+            Clear
+          </Button>
+          <Button variant="secondary" onClick={handleExportPDF}>
+            Export PDF
+          </Button>
+        </div>
       </div>
     </div>
   );
