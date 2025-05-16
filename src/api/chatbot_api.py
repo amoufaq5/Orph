@@ -1,46 +1,68 @@
-# chatbot_api.py
-
-"""
-Flask API for Orph medical chatbot using fine-tuned BioMedLM
-"""
+# chatbot_api.py with image model integration
 
 from flask import Flask, request, jsonify
 from transformers import AutoTokenizer, AutoModelForCausalLM
 import torch
+import os
+import uuid
+from diagnostic_image_model import DiagnosticModel, load_image, predict
 
 MODEL_PATH = "models/biomed_finetuned"
+IMAGE_MODEL_PATH = "models/xray_model.pt"
+UPLOAD_DIR = "uploads"
+os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 app = Flask(__name__)
 
-# Load model and tokenizer
-print("🧠 Loading model...")
+# Load BioMed LLM
+print("🧠 Loading BioMed model...")
 tokenizer = AutoTokenizer.from_pretrained(MODEL_PATH)
-model = AutoModelForCausalLM.from_pretrained(MODEL_PATH)
+llm_model = AutoModelForCausalLM.from_pretrained(MODEL_PATH)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-model.to(device)
+llm_model.to(device)
+
+# Load image model
+print("🩻 Loading image diagnostic model...")
+image_model = DiagnosticModel()
+image_model.load_state_dict(torch.load(IMAGE_MODEL_PATH, map_location=device))
+image_model.to(device)
 
 @app.route("/chat", methods=["POST"])
 def chat():
-    data = request.json
-    user_input = data.get("input", "")
+    user_input = request.form.get("input", "")
+    uploaded_file = request.files.get("file")
 
-    prompt = f"Symptoms: {user_input}\nDiagnosis and Advice:"
-    inputs = tokenizer(prompt, return_tensors="pt").to(device)
+    if uploaded_file:
+        filename = f"{uuid.uuid4().hex}_{uploaded_file.filename}"
+        filepath = os.path.join(UPLOAD_DIR, filename)
+        uploaded_file.save(filepath)
 
-    with torch.no_grad():
-        output = model.generate(
-            **inputs,
-            max_new_tokens=150,
-            do_sample=True,
-            top_k=50,
-            top_p=0.95,
-            temperature=0.7
-        )
+        try:
+            image_tensor = load_image(filepath)
+            diagnosis, prob = predict(image_model, image_tensor)
+            return jsonify({"response": f"Image diagnosis: {diagnosis} (confidence: {max(prob):.2f})"})
+        except Exception as e:
+            return jsonify({"response": f"Error processing image: {str(e)}"})
 
-    decoded = tokenizer.decode(output[0], skip_special_tokens=True)
-    response = decoded.split("Diagnosis and Advice:")[-1].strip()
+    if user_input:
+        prompt = f"Symptoms: {user_input}\nDiagnosis and Advice:"
+        inputs = tokenizer(prompt, return_tensors="pt").to(device)
 
-    return jsonify({"response": response})
+        with torch.no_grad():
+            output = llm_model.generate(
+                **inputs,
+                max_new_tokens=150,
+                do_sample=True,
+                top_k=50,
+                top_p=0.95,
+                temperature=0.7
+            )
+
+        decoded = tokenizer.decode(output[0], skip_special_tokens=True)
+        response = decoded.split("Diagnosis and Advice:")[-1].strip()
+        return jsonify({"response": response})
+
+    return jsonify({"response": "No valid input or file received."})
 
 
 if __name__ == "__main__":
