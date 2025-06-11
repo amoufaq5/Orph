@@ -1,0 +1,13 @@
+pandas
+numpy
+scikit-learn
+spacy==3.4.4
+matplotlib
+seaborn
+flask
+flask-cors
+joblib
+transformers
+torch
+openpyxl
+xgboost
