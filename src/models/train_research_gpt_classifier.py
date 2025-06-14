@@ -6,7 +6,7 @@ import numpy as np
 import os
 
 # Load dataset
-df = pd.read_csv("data/final/unified_nlp_dataset.csv")
+df = pd.read_csv("data/final/unified_nlp_dataset.csv", dtype=str, low_memory=False)
 df = df.dropna(subset=['text', 'label'])  # Removed 'type == labeled' filter
 
 # Check shape
