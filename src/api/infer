@@ -1,0 +1,56 @@
+import { useState } from "react";
+import { Card, CardContent } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+
+export default function Dashboard() {
+  const [input, setInput] = useState("");
+  const [response, setResponse] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  const handleSend = async () => {
+    setLoading(true);
+    try {
+      const res = await fetch("http://localhost:5000/api/infer", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ text: input }),
+      });
+      const data = await res.json();
+      setResponse(data.answer || "No response from model.");
+    } catch (error) {
+      setResponse("Error connecting to backend.");
+    }
+    setLoading(false);
+  };
+
+  return (
+    <div className="p-6 max-w-4xl mx-auto">
+      <h1 className="text-3xl font-bold mb-4">🧠 Orph Medical LLM Dashboard</h1>
+      <Card className="mb-4">
+        <CardContent className="space-y-4">
+          <Textarea
+            placeholder="Enter your symptom, disease, or drug-related question..."
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            className="min-h-[120px]"
+          />
+          <Button onClick={handleSend} disabled={loading}>
+            {loading ? "Analyzing..." : "Submit"}
+          </Button>
+        </CardContent>
+      </Card>
+      {response && (
+        <Card>
+          <CardContent className="p-4 whitespace-pre-wrap text-green-800">
+            <strong>📄 Diagnosis/Output:</strong>
+            <p className="mt-2">{response}</p>
+          </CardContent>
+        </Card>
+      )}
+    </div>
+  );
+}
