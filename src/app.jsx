@@ -1,4 +1,4 @@
-// App.jsx (Extended MVP with upload, charts, and routing)
+// App.jsx (Extended MVP with upload, charts, loading, decision, history, PDF report, and email)
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { Line } from 'react-chartjs-2';
@@ -14,7 +14,8 @@ function App() {
   const [history, setHistory] = useState([]);
   const [symptomFreq, setSymptomFreq] = useState({});
   const [file, setFile] = useState(null);
-  const [meta, setMeta] = useState({ age: '', duration_days: '', danger_symptoms: '' });
+  const [meta, setMeta] = useState({ age: '', duration_days: '', danger_symptoms: '', email: '' });
+  const [loading, setLoading] = useState(false);
 
   const handleLogin = async (e) => {
     e.preventDefault();
@@ -42,6 +43,7 @@ function App() {
   };
 
   const sendMessage = async () => {
+    setLoading(true);
     const res = await axios.post(`${API_BASE}/chat`, { message }, {
       headers: { Authorization: token }
     });
@@ -49,10 +51,12 @@ function App() {
     setHistory([...history, { input: message, output: res.data.response }]);
     setMessage('');
     updateChart(res.data.response);
+    setLoading(false);
   };
 
   const uploadImage = async () => {
     if (!file) return;
+    setLoading(true);
     const formData = new FormData();
     formData.append('file', file);
     formData.append('text', message);
@@ -68,9 +72,40 @@ function App() {
         'Content-Type': 'multipart/form-data'
       }
     });
-    alert(`Upload complete. ${res.data.message}`);
     setResponse(JSON.stringify(res.data.predictions, null, 2));
     updateChart(res.data.predictions);
+    setHistory([...history, { input: message + ' + image', output: res.data.predictions }]);
+    setLoading(false);
+  };
+
+  const generateReport = async () => {
+    try {
+      const res = await axios.post(`${API_BASE}/generate_report`, {
+        predictions: JSON.parse(response || '[]'),
+        text: message,
+        meta: {
+          age: parseInt(meta.age),
+          duration_days: parseInt(meta.duration_days),
+          danger_symptoms: meta.danger_symptoms.split(',').map(s => s.trim())
+        },
+        email: meta.email || undefined
+      }, {
+        headers: {
+          Authorization: token
+        },
+        responseType: 'blob'
+      });
+
+      const blob = new Blob([res.data], { type: 'application/pdf' });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = 'orph_diagnosis_report.pdf';
+      link.click();
+    } catch (err) {
+      alert('Failed to generate report');
+      console.error(err);
+    }
   };
 
   const updateChart = (output) => {
@@ -91,6 +126,12 @@ function App() {
       fill: false,
       borderColor: 'blue'
     }]
+  };
+
+  const decisionMessage = (output) => {
+    if (!Array.isArray(output)) return '';
+    const severe = output.find(r => r.score > 0.7 || r.disease?.toLowerCase().includes('pneumonia') || r.disease?.toLowerCase().includes('cancer'));
+    return severe ? '⚠️ AI Suggests: Refer to Doctor Immediately' : '✅ AI Suggests: OTC Medication May Be Suitable';
   };
 
   return (
@@ -132,7 +173,23 @@ function App() {
           <button onClick={sendMessage}>Send</button>
           <input type="file" onChange={(e) => setFile(e.target.files[0])} /><button onClick={uploadImage}>Upload CT/X-ray</button>
           <button onClick={() => { localStorage.removeItem('token'); setToken(''); setView('login'); }}>Logout</button>
+
+          {loading && <p>Processing... Please wait.</p>}
+
           <pre>{response}</pre>
+          <p style={{ fontWeight: 'bold' }}>{decisionMessage(JSON.parse(response || '[]'))}</p>
+
+          {response && (
+            <div>
+              <input
+                type="email"
+                placeholder="Enter email to receive report (optional)"
+                value={meta.email || ''}
+                onChange={(e) => setMeta({ ...meta, email: e.target.value })}
+              />
+              <button onClick={generateReport}>Download Report</button>
+            </div>
+          )}
 
           <h3>Chat History</h3>
           <ul>
