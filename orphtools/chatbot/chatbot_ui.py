@@ -115,6 +115,25 @@ def chat():
     log_session(request.user, message, response)
     return jsonify({"response": response})
 
+@app.route("/upload", methods=["POST"])
+@token_required
+def upload():
+    if 'file' not in request.files:
+        return jsonify({"error": "No file uploaded"}), 400
+
+    file = request.files['file']
+    filepath = os.path.join("uploads", file.filename)
+    os.makedirs("uploads", exist_ok=True)
+    file.save(filepath)
+
+    # Call visual diagnosis engine (dummy for now)
+    from orphtools.models.visual_diagnosis import VisualDiagnosis
+    visual = VisualDiagnosis()
+    features = visual.extract_features(filepath)
+
+    return jsonify({"message": "Image processed", "vector": features.tolist()})
+
+
 # Run the server
 if __name__ == "__main__":
     app.run(debug=True)
