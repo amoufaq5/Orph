@@ -1,45 +1,26 @@
 # orphtools/preprocessing/dataset_merger.py
+
+import json
 import os
-import pandas as pd
+from pathlib import Path
+from datetime import datetime
 
-class DatasetMerger:
-    def __init__(self):
-        self.columns = ["disease", "drug_name", "symptoms", "interactions", "side_effects", "overview", "source"]
+def merge_datasets(sources, output_dir):
+    merged = []
+    for path in sources:
+        with open(path, "r") as f:
+            merged += json.load(f)
 
-    def standardize_columns(self, df, source_name):
-        mapped = {col: col for col in df.columns if col in self.columns}
-        df = df.rename(columns=mapped)
-        for col in self.columns:
-            if col not in df.columns:
-                df[col] = ""
-        df["source"] = source_name
-        return df[self.columns]
+    # Remove exact duplicates
+    unique_data = {json.dumps(entry, sort_keys=True) for entry in merged}
+    final_data = [json.loads(item) for item in unique_data]
 
-    def merge_files(self, input_files, output_file):
-        all_dfs = []
-        for file_path, source_name in input_files:
-            if os.path.exists(file_path):
-                df = pd.read_csv(file_path)
-                df = self.standardize_columns(df, source_name)
-                all_dfs.append(df)
-            else:
-                print(f"❌ Skipping missing file: {file_path}")
+    Path(output_dir).mkdir(parents=True, exist_ok=True)
+    filename = f"merged_{datetime.now().strftime('%Y%m%d%H%M%S')}.json"
+    output_path = os.path.join(output_dir, filename)
 
-        if not all_dfs:
-            print("❌ No data to merge.")
-            return
+    with open(output_path, "w") as f:
+        json.dump(final_data, f, indent=2)
 
-        merged_df = pd.concat(all_dfs, ignore_index=True)
-        merged_df.drop_duplicates(inplace=True)
-        merged_df.to_csv(output_file, index=False)
-        print(f"✅ Merged dataset saved to {output_file}")
-
-
-# Example usage:
-# merger = DatasetMerger()
-# merger.merge_files(
-#     input_files=[
-#         ("data/cleaned/webmd_cleaned.csv", "webmd"),
-#         ("data/cleaned/drugs_com_cleaned.csv", "drugs_com")
-#     ],
-#     output_file="data/final/merged_dataset.csv"
+    print(f"✅ Merged {len(sources)} datasets. Saved to {output_path}")
+    return output_path
