@@ -1,6 +1,8 @@
-// App.jsx (Single File React App)
+// App.jsx (Extended MVP with upload, charts, and routing)
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
+import { Line } from 'react-chartjs-2';
+import 'chart.js/auto';
 
 const API_BASE = 'http://localhost:5000';
 
@@ -10,6 +12,8 @@ function App() {
   const [message, setMessage] = useState('');
   const [response, setResponse] = useState('');
   const [history, setHistory] = useState([]);
+  const [symptomFreq, setSymptomFreq] = useState({});
+  const [file, setFile] = useState(null);
 
   const handleLogin = async (e) => {
     e.preventDefault();
@@ -43,11 +47,45 @@ function App() {
     setResponse(JSON.stringify(res.data.response, null, 2));
     setHistory([...history, { input: message, output: res.data.response }]);
     setMessage('');
+    updateChart(res.data.response);
+  };
+
+  const uploadImage = async () => {
+    if (!file) return;
+    const formData = new FormData();
+    formData.append('file', file);
+    const res = await axios.post(`${API_BASE}/upload`, formData, {
+      headers: {
+        Authorization: token,
+        'Content-Type': 'multipart/form-data'
+      }
+    });
+    alert(`Upload response: ${res.data.message}`);
+  };
+
+  const updateChart = (output) => {
+    if (!Array.isArray(output)) return;
+    const symptoms = output.map(r => r.name || `Disease ${r[0]}`);
+    const updated = { ...symptomFreq };
+    symptoms.forEach(sym => {
+      updated[sym] = (updated[sym] || 0) + 1;
+    });
+    setSymptomFreq(updated);
+  };
+
+  const chartData = {
+    labels: Object.keys(symptomFreq),
+    datasets: [{
+      label: 'Prediction Frequency',
+      data: Object.values(symptomFreq),
+      fill: false,
+      borderColor: 'blue'
+    }]
   };
 
   return (
     <div style={{ padding: 20 }}>
-      <h1>Orph AI Chat</h1>
+      <h1>Orph AI Dashboard</h1>
 
       {view === 'login' && (
         <form onSubmit={handleLogin}>
@@ -75,16 +113,21 @@ function App() {
             value={message}
             onChange={(e) => setMessage(e.target.value)}
             placeholder="Describe your symptoms..."
-          ></textarea>
+          ></textarea><br />
           <button onClick={sendMessage}>Send</button>
-          <button onClick={() => { localStorage.removeItem('token'); setView('login'); }}>Logout</button>
+          <input type="file" onChange={(e) => setFile(e.target.files[0])} /><button onClick={uploadImage}>Upload CT/X-ray</button>
+          <button onClick={() => { localStorage.removeItem('token'); setToken(''); setView('login'); }}>Logout</button>
           <pre>{response}</pre>
+
           <h3>Chat History</h3>
           <ul>
             {history.map((h, i) => (
               <li key={i}><strong>You:</strong> {h.input}<br /><strong>AI:</strong> {JSON.stringify(h.output)}</li>
             ))}
           </ul>
+
+          <h3>Prediction Trends</h3>
+          <Line data={chartData} />
         </div>
       )}
     </div>
