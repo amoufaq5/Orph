@@ -1,4 +1,4 @@
-// App.jsx (Extended MVP with upload, charts, loading, decision, history, PDF report, and email)
+// App.jsx (Extended MVP with database-backed history, upload, charts, loading, decision, PDF report, and email)
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { Line } from 'react-chartjs-2';
@@ -16,6 +16,14 @@ function App() {
   const [file, setFile] = useState(null);
   const [meta, setMeta] = useState({ age: '', duration_days: '', danger_symptoms: '', email: '' });
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (token) {
+      axios.get(`${API_BASE}/history`, {
+        headers: { Authorization: token }
+      }).then(res => setHistory(res.data)).catch(console.error);
+    }
+  }, [token]);
 
   const handleLogin = async (e) => {
     e.preventDefault();
@@ -48,9 +56,13 @@ function App() {
       headers: { Authorization: token }
     });
     setResponse(JSON.stringify(res.data.response, null, 2));
-    setHistory([...history, { input: message, output: res.data.response }]);
+    const newEntry = { input: message, output: res.data.response };
+    setHistory([...history, newEntry]);
     setMessage('');
     updateChart(res.data.response);
+    await axios.post(`${API_BASE}/history`, newEntry, {
+      headers: { Authorization: token }
+    });
     setLoading(false);
   };
 
@@ -74,7 +86,11 @@ function App() {
     });
     setResponse(JSON.stringify(res.data.predictions, null, 2));
     updateChart(res.data.predictions);
-    setHistory([...history, { input: message + ' + image', output: res.data.predictions }]);
+    const newEntry = { input: message + ' + image', output: res.data.predictions };
+    setHistory([...history, newEntry]);
+    await axios.post(`${API_BASE}/history`, newEntry, {
+      headers: { Authorization: token }
+    });
     setLoading(false);
   };
 
