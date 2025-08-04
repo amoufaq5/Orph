@@ -1,0 +1,36 @@
+# config.yaml (Place in root directory)
+data:
+  raw_dir: data/raw/
+  cleaned_dir: data/cleaned/
+  merged_output: data/final/merged_dataset.csv
+
+model:
+  name: BioBERT
+  checkpoint: dmis-lab/biobert-base-cased-v1.1
+  max_length: 512
+  batch_size: 16
+  epochs: 5
+  learning_rate: 2e-5
+
+symptom_classifier:
+  threshold: 0.75
+  top_k: 3
+
+diagnosis:
+  fusion_enabled: true
+  multimodal_weight: 0.5
+  clarification_rounds: 2
+
+referral:
+  danger_threshold: 0.9
+  template_path: dashboard/templates/referral_template.html
+
+output:
+  log_dir: logs/sessions/
+  referral_dir: referrals/pdf/
+
+chatbot:
+  language: en
+  clarification_loop: true
+  enable_memory: true
+  max_turns: 15
