@@ -102,36 +102,64 @@ clarifier = ClarificationLoop()
 referrer = ReferralGenerator()
 chatbot = ChatbotEngine(engine, clarifier, referrer)
 
-# Protected chat route
-@app.route("/chat", methods=["POST"])
-@token_required
-def chat():
-    data = request.get_json()
-    message = data.get("message")
-    if not message:
-        return jsonify({"error": "Missing 'message' field"}), 400
-
-    response = chatbot.process_input(message)
-    log_session(request.user, message, response)
-    return jsonify({"response": response})
-
 @app.route("/upload", methods=["POST"])
 @token_required
 def upload():
-    if 'file' not in request.files:
-        return jsonify({"error": "No file uploaded"}), 400
+    if 'file' not in request.files or 'text' not in request.form:
+        return jsonify({"error": "Missing file or text input"}), 400
 
     file = request.files['file']
-    filepath = os.path.join("uploads", file.filename)
+    symptom_text = request.form['text']
+    meta_json = request.form.get('meta', '{}')  # optional structured fields
+    try:
+        meta = json.loads(meta_json)
+    except:
+        meta = {}
+
+    # Save file
     os.makedirs("uploads", exist_ok=True)
+    filepath = os.path.join("uploads", file.filename)
     file.save(filepath)
 
-    # Call visual diagnosis engine (dummy for now)
+    # Import and run vectorizers
     from orphtools.models.visual_diagnosis import VisualDiagnosis
-    visual = VisualDiagnosis()
-    features = visual.extract_features(filepath)
+    from orphtools.models.diagnosis_engine import DiagnosisEngine
+    from orphtools.logic.asmethod_parser import ASMethodParser
+    from orphtools.models.fusion_engine import FusionEngine
 
-    return jsonify({"message": "Image processed", "vector": features.tolist()})
+    visual = VisualDiagnosis()
+    image_vec = visual.extract_features(filepath).unsqueeze(0)  # shape: [1, 2048]
+
+    text_model = DiagnosisEngine("dmis-lab/biobert-base-cased-v1.1", threshold=0.0)
+    tokenizer = text_model.tokenizer
+    model = text_model.model
+
+    inputs = tokenizer(symptom_text, return_tensors="pt", truncation=True, padding=True, max_length=512)
+    with torch.no_grad():
+        outputs = model(**inputs)
+        text_vec = outputs.hidden_states[-1][:, 0, :] if hasattr(outputs, 'hidden_states') else outputs.logits
+    text_vec = text_vec.squeeze(0)
+
+    parser = ASMethodParser()
+    struct_vec = torch.tensor(parser.parse(meta)).unsqueeze(0)
+
+    # Match dimension sizes
+    image_vec = image_vec[:, :512]
+    text_vec = text_vec.unsqueeze(0)
+
+    # Run fusion
+    fusion = FusionEngine(text_dim=768, image_dim=512, structured_dim=8, output_dim=5)
+    fusion.eval()
+    with torch.no_grad():
+        pred = fusion(text_vec, image_vec, struct_vec)
+        probs = torch.softmax(pred, dim=-1).cpu().numpy().flatten()
+
+    result = [{"disease": f"Disease_{i}", "score": float(score)} for i, score in enumerate(probs) if score > 0.1]
+
+    return jsonify({
+        "message": "Image and text processed",
+        "predictions": result
+    })
 
 
 # Run the server
