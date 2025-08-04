@@ -14,6 +14,7 @@ function App() {
   const [history, setHistory] = useState([]);
   const [symptomFreq, setSymptomFreq] = useState({});
   const [file, setFile] = useState(null);
+  const [meta, setMeta] = useState({ age: '', duration_days: '', danger_symptoms: '' });
 
   const handleLogin = async (e) => {
     e.preventDefault();
@@ -54,18 +55,27 @@ function App() {
     if (!file) return;
     const formData = new FormData();
     formData.append('file', file);
+    formData.append('text', message);
+    formData.append('meta', JSON.stringify({
+      age: parseInt(meta.age),
+      duration_days: parseInt(meta.duration_days),
+      danger_symptoms: meta.danger_symptoms.split(',').map(s => s.trim())
+    }));
+
     const res = await axios.post(`${API_BASE}/upload`, formData, {
       headers: {
         Authorization: token,
         'Content-Type': 'multipart/form-data'
       }
     });
-    alert(`Upload response: ${res.data.message}`);
+    alert(`Upload complete. ${res.data.message}`);
+    setResponse(JSON.stringify(res.data.predictions, null, 2));
+    updateChart(res.data.predictions);
   };
 
   const updateChart = (output) => {
     if (!Array.isArray(output)) return;
-    const symptoms = output.map(r => r.name || `Disease ${r[0]}`);
+    const symptoms = output.map(r => r.disease || r.name || `Disease ${r[0]}`);
     const updated = { ...symptomFreq };
     symptoms.forEach(sym => {
       updated[sym] = (updated[sym] || 0) + 1;
@@ -114,6 +124,11 @@ function App() {
             onChange={(e) => setMessage(e.target.value)}
             placeholder="Describe your symptoms..."
           ></textarea><br />
+
+          <input type="number" placeholder="Age" value={meta.age} onChange={e => setMeta({ ...meta, age: e.target.value })} />
+          <input type="number" placeholder="Duration in days" value={meta.duration_days} onChange={e => setMeta({ ...meta, duration_days: e.target.value })} />
+          <input type="text" placeholder="Danger symptoms (comma separated)" value={meta.danger_symptoms} onChange={e => setMeta({ ...meta, danger_symptoms: e.target.value })} /><br />
+
           <button onClick={sendMessage}>Send</button>
           <input type="file" onChange={(e) => setFile(e.target.files[0])} /><button onClick={uploadImage}>Upload CT/X-ray</button>
           <button onClick={() => { localStorage.removeItem('token'); setToken(''); setView('login'); }}>Logout</button>
