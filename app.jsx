@@ -51,19 +51,31 @@ function App() {
   };
 
   const sendMessage = async () => {
-    setLoading(true);
+  setLoading(true);
+  try {
     const res = await axios.post(`${API_BASE}/chat`, { message }, {
       headers: { Authorization: token }
     });
-    setResponse(JSON.stringify(res.data.response, null, 2));
-    const newEntry = { input: message, output: res.data.response };
+
+    const fullResponse = res.data;
+    const displayText = `🧠 Prediction: ${fullResponse.prediction}\n\n🔍 Explanation:\n` +
+      fullResponse.explanation.map(([token, score]) => `- ${token}: ${score.toFixed(4)}`).join('\n');
+
+    setResponse(displayText);
+    const newEntry = { input: message, output: fullResponse };
     setHistory([...history, newEntry]);
+    updateChart([{ disease: fullResponse.prediction }]);
     setMessage('');
-    updateChart(res.data.response);
     await axios.post(`${API_BASE}/history`, newEntry, {
       headers: { Authorization: token }
     });
-    setLoading(false);
+  } catch (err) {
+    console.error(err);
+    setResponse('❌ Error occurred while fetching prediction.');
+  }
+  setLoading(false);
+};
+
   };
 
   const uploadImage = async () => {
@@ -209,17 +221,19 @@ function App() {
 
           <h3>Chat History</h3>
           <ul>
-            {history.map((h, i) => (
-              <li key={i}><strong>You:</strong> {h.input}<br /><strong>AI:</strong> {JSON.stringify(h.output)}</li>
-            ))}
-          </ul>
+  {history.map((h, i) => (
+    <li key={i}>
+      <strong>You:</strong> {h.input}<br />
+      <strong>AI:</strong> 🧠 Prediction: {h.output.prediction}<br />
+      <strong>Explanation:</strong>
+      <ul>
+        {h.output.explanation.map(([token, score], j) => (
+          <li key={j}>{token}: {score.toFixed(4)}</li>
+        ))}
+      </ul>
+    </li>
+  ))}
+</ul>
 
-          <h3>Prediction Trends</h3>
-          <Line data={chartData} />
-        </div>
-      )}
-    </div>
-  );
-}
 
 export default App;
