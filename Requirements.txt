@@ -1,0 +1,10 @@
+torch
+torchvision
+transformers
+sentencepiece
+Flask
+flask-cors
+pandas
+pyyaml
+scikit-learn
+Pillow
