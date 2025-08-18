@@ -1,12 +1,36 @@
-# config.yaml
+# ===============================
+# Orph Project Configuration
+# ===============================
+
+api:
+  # API authentication key
+  # You can also override this by setting ORPH_API_KEY in environment variables.
+  key: "f4a1c3b9d2e64f18b43a9ef07a97b313d7d80f2e9e9f6a8c23f58a2d4c9e0a12"
 
 paths:
-  raw_data: data/raw/combined.json
-  clean_data: data/clean/cleaned.json
-  synthetic_data: data/synthetic/
-  merged_data: data/merged/
-  model_dir: models/orphgpt/
+  data_raw: "data/raw"
+  data_clean: "data/clean"
+  synthetic: "data/synthetic"
+  cleaners: "data/cleaners"
+  checkpoints: "outputs/checkpoints"
+  logs: "outputs/logs"
 
-synthetic:
-  use: true
-  num_cases: 500
+training:
+  batch_size: 32
+  epochs: 5
+  learning_rate: 3e-5
+  optimizer: "adamw"
+  device: "cuda"   # options: "cuda", "cpu"
+
+model:
+  type: "OrphGPT"
+  vocab_size: 32000
+  hidden_size: 768
+  num_layers: 12
+  num_heads: 12
+  dropout: 0.1
+
+logging:
+  level: "INFO"   # DEBUG, INFO, WARNING, ERROR
+  save_predictions: true
+  save_metrics: true
