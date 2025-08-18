@@ -15,7 +15,16 @@ from src.utils.logging import init_logger
 from src.data.builders.text_pretrain_builder import TextPretrainDataset
 from src.data.builders.text_supervised_builder import TextSupervisedDataset
 from src.modeling.tokenizer import load_or_train_tokenizer
+from transformers import DataCollatorForLanguageModeling
+from src.data.builders import TextPretrainDataset, TextSupervisedDataset
 
+# pretrain
+ds = TextPretrainDataset(cfg.require("text_datasets.pretrain_jsonl"), tok, max_len)
+collator = DataCollatorForLanguageModeling(tok, mlm=False)
+
+# supervised
+ds = TextSupervisedDataset(cfg.require("text_datasets.supervised_jsonl"), tok, max_len)
+collator = None
 logger = init_logger("train_text")
 
 
