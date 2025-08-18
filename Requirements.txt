@@ -1,10 +1,20 @@
-torch
+# Core ML
+torch            # install with CUDA-specific command from pytorch.org if you have a GPU
 torchvision
 transformers
 sentencepiece
-Flask
-flask-cors
+tokenizers
+
+# Data & utils
 pandas
 pyyaml
 scikit-learn
 Pillow
+python-dotenv
+
+# API
+Flask
+flask-cors
+
+# Dev & tests
+pytest
