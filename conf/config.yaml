@@ -34,3 +34,8 @@ logging:
   level: "INFO"   # DEBUG, INFO, WARNING, ERROR
   save_predictions: true
   save_metrics: true
+
+eval:
+  pretrain_jsonl: "data/clean/text_pretrain_val.jsonl"
+  supervised_jsonl: "data/clean/text_supervised_val.jsonl"
+  report_path: "outputs/reports/eval_text.json"
