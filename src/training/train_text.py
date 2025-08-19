@@ -5,6 +5,7 @@ import json
 import argparse
 import subprocess
 from pathlib import Path
+from typing import Tuple, Optional
 
 import torch
 from transformers import (
@@ -16,19 +17,69 @@ from transformers import (
     set_seed,
 )
 
-# ------------------------------------------------------------------------------------
-# Config
+# ----------------------------
+# Project paths & defaults
+# ----------------------------
 DATA_JSONL = Path("data/clean/text_supervised.jsonl")
 PIPELINE_MODULE = "src.data.pipelines.build_synthetic_supervised"  # builds the jsonl
 DEFAULT_MODEL = "gpt2"
 SEED = 42
 
-# ------------------------------------------------------------------------------------
-# Dataset (expects you already have this builder as we discussed)
-# If your class lives elsewhere, adjust the import path accordingly.
+# Your supervised dataset builder (must output aligned input_ids/labels/attention_mask)
 from src.data.builders.text_supervised_builder import TextSupervisedDataset  # noqa: E402
 
 
+# ----------------------------
+# YAML config support
+# ----------------------------
+def parse_args():
+    """
+    Parse CLI args, then (optionally) override from a YAML config.
+    YAML keys matching arg names will override the CLI/defaults.
+    """
+    parser = argparse.ArgumentParser(description="Train causal LM on Orph supervised text data.")
+    parser.add_argument("--config", type=str, default=None, help="Path to YAML config (e.g., conf/config.yaml)")
+    parser.add_argument("--model_name", type=str, default=DEFAULT_MODEL, help="HF model name or path")
+    parser.add_argument("--output_dir", type=str, default="out/text_gpt2")
+    parser.add_argument("--max_length", type=int, default=512)
+    parser.add_argument("--epochs", type=float, default=2.0)
+    parser.add_argument("--lr", type=float, default=5e-5)
+    parser.add_argument("--weight_decay", type=float, default=0.01)
+    parser.add_argument("--warmup_ratio", type=float, default=0.03)
+    parser.add_argument("--train_batch_size", type=int, default=1)  # per-device
+    parser.add_argument("--grad_accum", type=int, default=8)        # effective batch ~8
+    parser.add_argument("--eval_split", type=float, default=0.02)   # 2% quick sanity eval
+    parser.add_argument("--logging_steps", type=int, default=50)
+    parser.add_argument("--save_steps", type=int, default=500)
+    parser.add_argument("--eval_steps", type=int, default=500)
+    parser.add_argument("--seed", type=int, default=SEED)
+    parser.add_argument("--resume_from_checkpoint", type=str, default=None)
+
+    args = parser.parse_args()
+
+    if args.config:
+        try:
+            import yaml
+        except Exception as e:
+            raise RuntimeError(
+                "YAML config requested but PyYAML is not installed. "
+                "Install with: pip install pyyaml"
+            ) from e
+
+        with open(args.config, "r", encoding="utf-8") as f:
+            cfg = yaml.safe_load(f) or {}
+
+        # Override known attributes only
+        for k, v in cfg.items():
+            if hasattr(args, k):
+                setattr(args, k, v)
+
+    return args
+
+
+# ----------------------------
+# Helpers
+# ----------------------------
 def ensure_supervised_dataset(n_cases: int = 3000):
     """Ensure data/clean/text_supervised.jsonl exists; if not, build from synthetic cases."""
     if DATA_JSONL.exists():
@@ -41,7 +92,7 @@ def ensure_supervised_dataset(n_cases: int = 3000):
     print(f"✅ Built {DATA_JSONL}")
 
 
-def load_tokenizer_and_model(model_name: str):
+def load_tokenizer_and_model(model_name: str) -> Tuple[AutoTokenizer, AutoModelForCausalLM]:
     tokenizer = AutoTokenizer.from_pretrained(model_name, use_fast=True)
 
     # GPT‑2 has no pad token by default → align pad/eos
@@ -55,13 +106,11 @@ def load_tokenizer_and_model(model_name: str):
 
     # Reduce memory footprint
     model.gradient_checkpointing_enable()
-
     return tokenizer, model
 
 
 def build_datasets(tokenizer, max_length: int, eval_split: float):
     """Simple in‑file split without extra libs."""
-    # Read all rows once to split deterministically
     rows = []
     with open(DATA_JSONL, "r", encoding="utf-8") as f:
         for line in f:
@@ -71,7 +120,6 @@ def build_datasets(tokenizer, max_length: int, eval_split: float):
     n_eval = int(n_total * eval_split) if eval_split > 0 else 0
     n_train = n_total - n_eval
 
-    # Write temporary split files to reuse your dataset class unmodified
     tmp_dir = Path("data/clean/_splits")
     tmp_dir.mkdir(parents=True, exist_ok=True)
     train_path = tmp_dir / "train.jsonl"
@@ -81,34 +129,19 @@ def build_datasets(tokenizer, max_length: int, eval_split: float):
         for i in range(n_train):
             ft.write(json.dumps(rows[i], ensure_ascii=False) + "\n")
 
+    eval_ds = None
     if n_eval > 0:
         with open(eval_path, "w", encoding="utf-8") as fe:
             for i in range(n_train, n_total):
                 fe.write(json.dumps(rows[i], ensure_ascii=False) + "\n")
+        eval_ds = TextSupervisedDataset(str(eval_path), tokenizer=tokenizer, max_length=max_length)
 
     train_ds = TextSupervisedDataset(str(train_path), tokenizer=tokenizer, max_length=max_length)
-    eval_ds = TextSupervisedDataset(str(eval_path), tokenizer=tokenizer, max_length=max_length) if n_eval > 0 else None
     return train_ds, eval_ds
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Train causal LM on Orph supervised text data.")
-    parser.add_argument("--model_name", type=str, default=DEFAULT_MODEL, help="HF model name or path (e.g., gpt2)")
-    parser.add_argument("--output_dir", type=str, default="out/text_gpt2")
-    parser.add_argument("--max_length", type=int, default=512)
-    parser.add_argument("--epochs", type=float, default=2.0)
-    parser.add_argument("--lr", type=float, default=5e-5)
-    parser.add_argument("--weight_decay", type=float, default=0.01)
-    parser.add_argument("--warmup_ratio", type=float, default=0.03)
-    parser.add_argument("--train_batch_size", type=int, default=1)  # per device
-    parser.add_argument("--grad_accum", type=int, default=8)        # effective batch size ~8
-    parser.add_argument("--eval_split", type=float, default=0.02)   # 2% for quick sanity eval
-    parser.add_argument("--logging_steps", type=int, default=50)
-    parser.add_argument("--save_steps", type=int, default=500)
-    parser.add_argument("--eval_steps", type=int, default=500)
-    parser.add_argument("--seed", type=int, default=SEED)
-    args = parser.parse_args()
-
+    args = parse_args()
     set_seed(args.seed)
 
     # 1) Ensure dataset exists (generate from synthetic cases if missing)
@@ -120,11 +153,11 @@ def main():
     # 3) Datasets
     train_ds, eval_ds = build_datasets(tokenizer, args.max_length, args.eval_split)
 
-    # 4) Collator: dynamic padding, labels auto‑aligned by dataset
+    # 4) Collator: dynamic padding, labels already aligned by dataset
     data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
 
     # 5) Training args (tuned for ~8GB GPU)
-    fp16 = torch.cuda.is_available()  # use fp16 if CUDA present
+    use_fp16 = torch.cuda.is_available()
     training_args = TrainingArguments(
         output_dir=args.output_dir,
         overwrite_output_dir=True,
@@ -138,8 +171,8 @@ def main():
         gradient_accumulation_steps=args.grad_accum,
         gradient_checkpointing=True,
 
-        fp16=fp16,
-        bf16=False,  # 30‑series cards prefer fp16
+        fp16=use_fp16,
+        bf16=False,  # Ampere consumer cards prefer fp16
         torch_compile=False,
 
         logging_steps=args.logging_steps,
@@ -160,11 +193,11 @@ def main():
         eval_dataset=eval_ds,
         data_collator=data_collator,
         tokenizer=tokenizer,
-        compute_metrics=None,  # optional: add perplexity later
+        compute_metrics=None,  # add perplexity later if you want
     )
 
-    # 7) Train
-    trainer.train()
+    # 7) Train (optionally resume)
+    trainer.train(resume_from_checkpoint=args.resume_from_checkpoint)
 
     # 8) Save
     trainer.save_model(args.output_dir)
