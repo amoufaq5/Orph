@@ -26,6 +26,21 @@ def main():
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
+    # ... after you do: tokenizer = AutoTokenizer.from_pretrained(...); model = AutoModelForCausalLM.from_pretrained(...)
+
+# GPT-2 has no pad token by default → align pad/eos
+if tokenizer.pad_token is None:
+    tokenizer.pad_token = tokenizer.eos_token
+if getattr(model.config, "pad_token_id", None) is None:
+    model.config.pad_token_id = tokenizer.pad_token_id
+
+# Use a causal LM collator that handles dynamic padding
+from transformers import DataCollatorForLanguageModeling
+data_collator = DataCollatorForLanguageModeling(
+    tokenizer=tokenizer,
+    mlm=False  # causal LM
+)
+
     # Dataset
     if mode == "pretrain":
         dataset = TextPretrainDataset(
