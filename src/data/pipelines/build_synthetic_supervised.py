@@ -1,17 +1,24 @@
 # src/data/pipelines/build_synthetic_supervised.py
-import sys, os
+import os
+import json
+import argparse
 from pathlib import Path
 
-# Ensure project root is in sys.path
-ROOT = Path(__file__).resolve().parents[3]   # goes up from src/data/pipelines/
-sys.path.append(str(ROOT))
-
+# Import from within the src package tree
+# Requires: E:\Orph\src\data\generate_synthetic_cases.py
 try:
-    from generate_synthetic_cases import generate_cases
-except ImportError:
-    raise ImportError("Could not import generate_synthetic_cases.py. Make sure it's in project root or src/data/")
-
-    )
+    from src.data.generate_synthetic_cases import generate_cases  # preferred
+except ImportError as e:
+    # Some older versions used a different name for the function
+    try:
+        from src.data.generate_synthetic_cases import generate_synthetic_cases as generate_cases  # type: ignore
+    except Exception:
+        raise ImportError(
+            "Could not import generate_cases from src.data.generate_synthetic_cases. "
+            "Make sure generate_synthetic_cases.py exists under src/data/ and defines "
+            "either `generate_cases(n: int) -> list[dict]` or "
+            "`generate_synthetic_cases(n: int) -> list[dict]`."
+        ) from e
 
 CLEAN_DIR = Path("data/clean")
 OUT_PATH = CLEAN_DIR / "text_supervised.jsonl"
@@ -19,37 +26,33 @@ OUT_PATH = CLEAN_DIR / "text_supervised.jsonl"
 
 def case_to_instruction_records(case: dict) -> list[dict]:
     """
-    Convert ONE synthetic case into one or more supervised text records.
+    Convert ONE synthetic case dict to one or more instruction-tuning records.
 
-    Expected keys in `case` (best-effort; adapt to your generator's fields):
-      - patient_profile / demographics (optional)
+    Expected (best-effort) keys in `case`:
       - symptoms: list[str] or str
-      - duration / onset (optional)
-      - history / meds (optional)
-      - danger_signs: list[str] or str (optional)
-      - suspected_diseases: list[str] or str (optional)
-      - final_diagnosis: str (optional)
-      - recommendation: str  (OTC advice or "refer to doctor")
-      - otc_drug / dose / counseling (optional)
-      - explanation / rationale (optional)
-      - asmethod_answers (optional)
+      - duration/time, history, (current_)meds, danger_signs
+      - final_diagnosis/diagnosis
+      - recommendation (OTC plan or refer)
+      - otc_drug/otc, dose, counseling/advice
+      - explanation/rationale
+      - asmethod_answers
 
-    Output record schema (jsonl):
+    Output JSONL record schema:
       {
         "task": "triage|otc|diagnosis|counseling",
-        "input": "<concise patient message / structured summary>",
-        "target": "<the correct assistant response>",
-        "meta": {... free-form, kept for traceability ...}
+        "input": "<concise patient summary + explicit task>",
+        "target": "<gold response text>",
+        "meta": {... free-form audit info ...}
       }
     """
     records = []
 
-    # Grab fields safely
+    # Safe field extraction
     symptoms = case.get("symptoms", [])
     if isinstance(symptoms, list):
         symptoms_str = ", ".join(symptoms)
     else:
-        symptoms_str = str(symptoms)
+        symptoms_str = str(symptoms) if symptoms else ""
 
     duration = case.get("duration") or case.get("time") or ""
     history = case.get("history") or ""
@@ -58,7 +61,7 @@ def case_to_instruction_records(case: dict) -> list[dict]:
     if isinstance(danger, list):
         danger_str = ", ".join(danger)
     else:
-        danger_str = str(danger)
+        danger_str = str(danger) if danger else ""
 
     final_dx = case.get("final_diagnosis") or case.get("diagnosis") or ""
     reco = case.get("recommendation") or ""
@@ -68,7 +71,7 @@ def case_to_instruction_records(case: dict) -> list[dict]:
     rationale = case.get("explanation") or case.get("rationale") or ""
     asmethod = case.get("asmethod_answers") or {}
 
-    # Create a compact, model-friendly input summary
+    # Compact summary used in all prompts
     summary_lines = [
         f"Symptoms: {symptoms_str}" if symptoms_str else None,
         f"Duration: {duration}" if duration else None,
@@ -78,7 +81,7 @@ def case_to_instruction_records(case: dict) -> list[dict]:
     ]
     summary = "\n".join([s for s in summary_lines if s])
 
-    # 1) Triage record (refer vs self-care)
+    # 1) Triage (refer vs OTC)
     if reco:
         records.append({
             "task": "triage",
@@ -87,17 +90,16 @@ def case_to_instruction_records(case: dict) -> list[dict]:
             "meta": {"source": "synthetic", "rationale": rationale, "asmethod": asmethod, "case": case}
         })
 
-    # 2) Diagnosis record
+    # 2) Diagnosis (single line)
     if final_dx:
-        prompt = f"{summary}\n\nTask: Provide the most likely diagnosis (one line)."
         records.append({
             "task": "diagnosis",
-            "input": prompt,
+            "input": f"{summary}\n\nTask: Provide the most likely diagnosis (one line).",
             "target": final_dx.strip(),
             "meta": {"source": "synthetic", "rationale": rationale, "asmethod": asmethod, "case": case}
         })
 
-    # 3) OTC recommendation record
+    # 3) OTC recommendation (drug + dose + counseling)
     if otc or counseling:
         rec_lines = []
         if otc:
@@ -115,7 +117,7 @@ def case_to_instruction_records(case: dict) -> list[dict]:
             "meta": {"source": "synthetic", "rationale": rationale, "asmethod": asmethod, "case": case}
         })
 
-    # 4) Counseling-only record (if present)
+    # 4) Counseling-only (if present without explicit OTC)
     if counseling and not otc:
         records.append({
             "task": "counseling",
@@ -124,9 +126,8 @@ def case_to_instruction_records(case: dict) -> list[dict]:
             "meta": {"source": "synthetic", "rationale": rationale, "asmethod": asmethod, "case": case}
         })
 
-    # Fallback: ensure at least one record exists
+    # Fallback to ensure at least one example per case
     if not records:
-        # minimal single-turn instruction if generator is sparse
         fallback_target = reco or final_dx or "Provide safe self-care guidance or refer if necessary."
         records.append({
             "task": "triage",
@@ -141,12 +142,10 @@ def case_to_instruction_records(case: dict) -> list[dict]:
 def build_synthetic_jsonl(n_cases: int, out_path: Path = OUT_PATH) -> int:
     CLEAN_DIR.mkdir(parents=True, exist_ok=True)
 
-    # Generate synthetic cases
     cases = generate_cases(n_cases)
     if not isinstance(cases, list):
-        raise ValueError("generate_cases() must return a list of dicts.")
+        raise ValueError("generate_cases() must return a list[dict].")
 
-    # Normalize → instruction-tuning records
     count = 0
     with open(out_path, "w", encoding="utf-8") as f:
         for case in cases:
@@ -158,7 +157,7 @@ def build_synthetic_jsonl(n_cases: int, out_path: Path = OUT_PATH) -> int:
 
 def main():
     parser = argparse.ArgumentParser(description="Build supervised text JSONL from synthetic cases.")
-    parser.add_argument("--n_cases", type=int, default=2000, help="Number of synthetic base cases to generate.")
+    parser.add_argument("--n_cases", type=int, default=2000, help="Number of synthetic cases to generate.")
     parser.add_argument("--out", type=str, default=str(OUT_PATH), help="Output JSONL path.")
     args = parser.parse_args()
 
