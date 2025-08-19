@@ -1,16 +1,16 @@
 # src/data/pipelines/build_synthetic_supervised.py
-import os, json, argparse
+import sys, os
 from pathlib import Path
 
-# ------------- IMPORT YOUR SYNTHETIC GENERATOR -------------
-# Assumes you have a function like: generate_cases(n: int) -> List[dict]
-# If your file exposes a different API, adjust the wrapper below.
+# Ensure project root is in sys.path
+ROOT = Path(__file__).resolve().parents[3]   # goes up from src/data/pipelines/
+sys.path.append(str(ROOT))
+
 try:
-    from generate_synthetic_cases import generate_cases  # preferred
+    from generate_synthetic_cases import generate_cases
 except ImportError:
-    # Fallback for alt API names (common patterns)
-    from generate_synthetic_cases import (
-        generate_synthetic_cases as generate_cases  # noqa
+    raise ImportError("Could not import generate_synthetic_cases.py. Make sure it's in project root or src/data/")
+
     )
 
 CLEAN_DIR = Path("data/clean")
