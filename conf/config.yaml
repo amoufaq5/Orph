@@ -49,3 +49,34 @@ eval:
   pretrain_jsonl: "data/clean/text_pretrain_val.jsonl"
   supervised_jsonl: "data/clean/text_supervised_val.jsonl"
   report_path: "outputs/reports/eval_text.json"
+
+  model:
+  # keep this for your GPT-2 runs
+  name: "gpt2"
+
+  # for from-scratch runs
+  tokenizer_dir: "outputs/tokenizer/orph_bpe_32k"
+  arch:
+    n_embd: 768
+    n_layer: 12
+    n_head: 12
+    n_positions: 1024
+
+training:
+  # choose per run: "pretrain" then "supervised"
+  mode: "pretrain"
+  max_length: 512
+  batch_size: 2
+  grad_accum: 8
+  epochs: 3
+  learning_rate: 5e-5
+  warmup_ratio: 0.03
+  output_dir: "outputs/checkpoints/orph-125m"
+  logging_steps: 50
+  save_steps: 1000
+  save_total_limit: 3
+
+text_datasets:
+  pretrain_jsonl: "data/clean/text_pretrain.jsonl"
+  supervised_jsonl: "data/clean/text_supervised.jsonl"
+
