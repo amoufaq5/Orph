@@ -1,82 +1,71 @@
 # ===============================
-# Orph Project Configuration
+# Orph Medical LLM Configuration
 # ===============================
 
 api:
-  # You can also set ORPH_API_KEY in your shell/.env (takes precedence)
+  # Fallback key (can override with ORPH_API_KEY in environment)
   key: "devkey"
 
 paths:
   data_raw: "data/raw"
   data_clean: "data/clean"
-  checkpoints: "outputs/checkpoints/text"
+  checkpoints: "outputs/checkpoints"
   reports: "outputs/reports"
 
 model:
-  # Start small to validate the pipeline; later swap to a 7B base for LoRA
-  name: "gpt2"
+  # For GPT-2 experiments you can still set:
+  # name: "gpt2"
 
-text_datasets:
-  # Point these to your prepared JSONL files (see guide below)
-  pretrain_jsonl: "data/clean/text_pretrain.jsonl"
-  supervised_jsonl: "data/clean/text_supervised.jsonl"
-  retrain_jsonl: "data/clean/text_retrain_new.jsonl"
-
-training:
-  # Choose one: pretrain | supervised | retrain
-  mode: "supervised"
-
-  # Memory‑friendly defaults for an RTX 2070 (8 GB)
-  max_length: 512
-  batch_size: 2
-  epochs: 3
-  learning_rate: 5e-5
-
-  # Where to save the model
-  output_dir: "outputs/checkpoints/text"
-
-  # Logging & checkpoints
-  logging_steps: 50
-  save_steps: 1000
-  save_total_limit: 2
-
-  # Retrain settings (used only when mode: retrain)
-  retrain_new_weight: 3
-  retrain_dedupe: true
-
-eval:
-  # Optional convenience paths for quick evaluation
-  pretrain_jsonl: "data/clean/text_pretrain_val.jsonl"
-  supervised_jsonl: "data/clean/text_supervised_val.jsonl"
-  report_path: "outputs/reports/eval_text.json"
-
-  model:
-  # keep this for your GPT-2 runs
-  name: "gpt2"
-
-  # for from-scratch runs
+  # From-scratch config
   tokenizer_dir: "outputs/tokenizer/orph_bpe_32k"
+
+  # Architecture for Orph-125M (MVP)
   arch:
     n_embd: 768
     n_layer: 12
     n_head: 12
     n_positions: 1024
+    dropout: 0.0
+
+text_datasets:
+  # Pretrain corpus (optional, if you make text_pretrain.jsonl)
+  pretrain_jsonl: "data/clean/text_pretrain.jsonl"
+
+  # Supervised instruction corpus (you already have this one)
+  supervised_jsonl: "data/clean/text_supervised.jsonl"
+
+  # New cases for continual training (optional later)
+  retrain_jsonl: "data/clean/text_retrain_new.jsonl"
 
 training:
-  # choose per run: "pretrain" then "supervised"
-  mode: "pretrain"
+  # Choose one: "pretrain" | "supervised" | "retrain"
+  mode: "supervised"
+
+  # Sequence length & batching
   max_length: 512
   batch_size: 2
   grad_accum: 8
+
+  # Optimization
   epochs: 3
   learning_rate: 5e-5
+  weight_decay: 0.0
   warmup_ratio: 0.03
-  output_dir: "outputs/checkpoints/orph-125m"
+
+  # Output dir (change per stage)
+  output_dir: "outputs/checkpoints/orph-125m-sft"
+
+  # Logging & checkpoints
   logging_steps: 50
   save_steps: 1000
   save_total_limit: 3
 
-text_datasets:
-  pretrain_jsonl: "data/clean/text_pretrain.jsonl"
-  supervised_jsonl: "data/clean/text_supervised.jsonl"
+  # Retrain settings (if mode = retrain)
+  retrain_new_weight: 3
+  retrain_dedupe: true
 
+eval:
+  # Optional eval sets (if you create held-out JSONLs)
+  pretrain_jsonl: "data/clean/text_pretrain_val.jsonl"
+  supervised_jsonl: "data/clean/text_supervised_val.jsonl"
+  report_path: "outputs/reports/eval_text.json"
