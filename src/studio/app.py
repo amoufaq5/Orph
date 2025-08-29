@@ -1,24 +1,79 @@
 from flask import Flask, request, jsonify, send_file, abort
+from flask_cors import CORS
 from pathlib import Path
-import json, shutil, io, zipfile
+import io, zipfile, json
 
-from .storage import save_dataset
+from .storage import save_dataset, list_models, get_by_job, report_paths
 from .jobs import submit_job, job_status, job_logs, job_model_dir
 
 app = Flask(__name__)
+CORS(app)  # allow local React dev
 
+# -----------------------------
+# Health & templates
+# -----------------------------
 @app.route("/health", methods=["GET"])
 def health():
     return jsonify({"ok": True})
 
+@app.route("/templates", methods=["GET"])
+def templates():
+    # Minimal built-in agent templates; you can also load from files
+    presets = [
+        {
+            "id": "doctor",
+            "label": "DoctorGPT",
+            "base_model": "gpt2",
+            "curriculum": "sft:0.85,cot:0.15",
+            "max_length": 1024,
+            "epochs": 1,
+            "notes": "General clinician; heavier SFT, lighter CoT"
+        },
+        {
+            "id": "symptom",
+            "label": "SymptomGPT",
+            "base_model": "gpt2",
+            "curriculum": "sft:0.6,cot:0.4",
+            "max_length": 768,
+            "epochs": 1,
+            "notes": "Triage-heavy; more CoT for reasoning"
+        },
+        {
+            "id": "pharma",
+            "label": "PharmaGPT",
+            "base_model": "gpt2",
+            "curriculum": "sft:0.9,cot:0.1",
+            "max_length": 768,
+            "epochs": 1,
+            "notes": "Drug info & counseling; SFT-biased"
+        },
+        {
+            "id": "research",
+            "label": "ResearchGPT",
+            "base_model": "gpt2",
+            "curriculum": "sft:0.5,cot:0.5",
+            "max_length": 1024,
+            "epochs": 1,
+            "notes": "PubMed-focused; balanced SFT/CoT"
+        }
+    ]
+    return jsonify({"templates": presets})
+
+# -----------------------------
+# Datasets
+# -----------------------------
 @app.route("/upload_dataset", methods=["POST"])
 def upload_dataset():
     user_id = request.form.get("user_id", "default")
     f = request.files.get("file")
-    if not f: abort(400, "No file uploaded")
+    if not f:
+        abort(400, "No file uploaded")
     path = save_dataset(f, user_id)
     return jsonify({"ok": True, "path": path})
 
+# -----------------------------
+# Jobs
+# -----------------------------
 @app.route("/start_finetune", methods=["POST"])
 def start_finetune():
     """
@@ -41,19 +96,29 @@ def start_finetune():
 
 @app.route("/status/<job_id>", methods=["GET"])
 def status(job_id):
-    st = job_status(job_id)
-    return jsonify(st)
+    return jsonify(job_status(job_id))
 
 @app.route("/logs/<job_id>", methods=["GET"])
 def logs(job_id):
-    log_text = job_logs(job_id)
-    return jsonify({"job_id": job_id, "logs": log_text})
+    return jsonify({"job_id": job_id, "logs": job_logs(job_id)})
+
+# -----------------------------
+# Models / Registry
+# -----------------------------
+@app.route("/list_models", methods=["GET"])
+def list_models_route():
+    return jsonify({"models": list_models()})
 
 @app.route("/download_model/<job_id>", methods=["GET"])
 def download_model(job_id):
+    # prefer live job dir; fall back to registry
     model_dir = job_model_dir(job_id)
+    if not model_dir:
+        item = get_by_job(job_id)
+        model_dir = item.get("model_dir","") if item else ""
     if not model_dir or not Path(model_dir).exists():
         abort(404, "Model not found")
+
     mem = io.BytesIO()
     with zipfile.ZipFile(mem, "w", zipfile.ZIP_DEFLATED) as zf:
         for p in Path(model_dir).rglob("*"):
@@ -61,6 +126,48 @@ def download_model(job_id):
                 zf.write(p, p.relative_to(model_dir).as_posix())
     mem.seek(0)
     return send_file(mem, as_attachment=True, download_name=f"{job_id}_model.zip", mimetype="application/zip")
+
+# -----------------------------
+# Reports
+# -----------------------------
+@app.route("/report/<job_id>", methods=["GET"])
+def report_json(job_id):
+    item = get_by_job(job_id) or {}
+    model_dir = item.get("model_dir","")
+    if not model_dir or not Path(model_dir).exists():
+        abort(404, "Model directory not found")
+    j, _ = report_paths(model_dir)
+    if not j:
+        abort(404, "report.json not found")
+    return send_file(str(j), mimetype="application/json", as_attachment=False)
+
+@app.route("/report_pdf/<job_id>", methods=["GET"])
+def report_pdf(job_id):
+    item = get_by_job(job_id) or {}
+    model_dir = item.get("model_dir","")
+    if not model_dir or not Path(model_dir).exists():
+        abort(404, "Model directory not found")
+    _, pdf = report_paths(model_dir)
+    if not pdf:
+        abort(404, "report.pdf not found")
+    return send_file(str(pdf), mimetype="application/pdf", as_attachment=True, download_name=f"{job_id}_report.pdf")
+
+# -----------------------------
+# Promotions / Tags
+# -----------------------------
+@app.route("/promote_model", methods=["POST"])
+def promote_model():
+    """
+    JSON body: { "job_id": "...", "tag": "prod" }
+    """
+    from .storage import add_tag
+    data = request.get_json(force=True)
+    job_id = data.get("job_id")
+    tag = (data.get("tag") or "prod").strip().lower()
+    if not job_id:
+        abort(400, "job_id required")
+    add_tag(job_id, tag)
+    return jsonify({"ok": True, "job_id": job_id, "tag": tag})
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5055, debug=True)
