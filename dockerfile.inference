@@ -1,0 +1,21 @@
+# Dockerfile.inference
+FROM python:3.11-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
+
+WORKDIR /app
+
+# Install deps
+COPY requirements-infer.txt /app/requirements-infer.txt
+RUN pip install -r /app/requirements-infer.txt
+
+# Copy code
+COPY . /app
+
+# Create expected dirs (mounted in compose anyway)
+RUN mkdir -p outputs/user_models outputs/tokenizer
+
+EXPOSE 6060
+CMD ["python", "src/api/inference_api.py"]
