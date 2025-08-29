@@ -1,11 +1,13 @@
-import threading, time, uuid, subprocess, sys
+import threading, time, uuid, subprocess, sys, os
 from pathlib import Path
 
-from .config import TOKENIZER_DIR, ROOT
+from .config import TOKENIZER_DIR, ROOT, CLOUD_BACKEND
 from .storage import model_dir, logs_path, upsert_registry_entry, set_status, set_model_dir
 from . import reporter
 
-# In-memory runtime job state (lightweight)
+# Optional: RunPod adapter
+from .adapters import runpod_adapter as rp
+
 _JOBS = {}  # job_id -> dict(status, user_id, config, logs_path, model_dir)
 
 def _write_log(logfile: Path, text: str):
@@ -14,37 +16,49 @@ def _write_log(logfile: Path, text: str):
         lf.write(text.rstrip() + "\n")
         lf.flush()
 
-def _run_local_training(job_id: str, user_id: str, config: dict):
-    """
-    Simulated (or real) training runner.
-    If config['simulate'] is True (default), writes 10 simulated steps.
-    Otherwise, calls src/training/train_text.py with CPU-safe flags.
-    """
-    status = "running"
+def _finish_and_report(job_id, user_id, out_dir: Path, logf: Path, config: dict, ok: bool):
+    # Report (works even without a real model; quick eval will be skipped)
+    try:
+        reporter.generate_report(
+            job_id=job_id,
+            user_id=user_id,
+            out_dir=out_dir,
+            sft_path=Path(config.get("sft_path","")) if config.get("sft_path") else None,
+            cot_path=Path(config.get("cot_path","")) if config.get("cot_path") else None,
+            tokenizer_dir=TOKENIZER_DIR,
+            model_dir=out_dir if (out_dir / "MODEL_READY").exists() else None,
+            eval_path=Path(config.get("eval_path","")) if config.get("eval_path") else None,
+            config=config
+        )
+    except Exception as e:
+        _write_log(logf, f"[report] ERROR: {e}")
+
+    status = "completed" if ok else "failed"
     _JOBS[job_id]["status"] = status
     set_status(job_id, status)
+    _write_log(logf, status)
 
+# -------------------- LOCAL BACKEND --------------------
+def _run_local_training(job_id: str, user_id: str, config: dict):
+    _JOBS[job_id]["status"] = "running"; set_status(job_id, "running")
     logf = logs_path(user_id, job_id)
     out_dir = model_dir(user_id, job_id)
     _JOBS[job_id]["logs_path"] = str(logf)
     _JOBS[job_id]["model_dir"] = str(out_dir)
     set_model_dir(job_id, str(out_dir))
 
-    _write_log(logf, f"[{job_id}] starting; user={user_id}")
+    _write_log(logf, f"[{job_id}] starting local; user={user_id}")
     _write_log(logf, f"config={config}")
 
     try:
         simulate = config.get("simulate", True)
-
         if simulate:
             steps = int(config.get("sim_steps", 10))
             for i in range(steps):
                 time.sleep(1)
                 _write_log(logf, f"[{i+1}/{steps}] simulated step...")
-            # mark as “trained”
             (out_dir / "MODEL_READY").write_text("ok", encoding="utf-8")
         else:
-            # Real call (CPU-safe defaults)
             cmd = [
                 sys.executable, "src/training/train_text.py",
                 "--tokenizer_dir", str(TOKENIZER_DIR),
@@ -64,34 +78,84 @@ def _run_local_training(job_id: str, user_id: str, config: dict):
             _write_log(logf, "cmd: " + " ".join(cmd))
             subprocess.run(cmd, cwd=str(ROOT), check=True)
 
-        # Generate report (works even without a real model; will skip quick gen)
-        reporter.generate_report(
-            job_id=job_id,
-            user_id=user_id,
-            out_dir=out_dir,
-            sft_path=Path(config.get("sft_path","")) if config.get("sft_path") else None,
-            cot_path=Path(config.get("cot_path","")) if config.get("cot_path") else None,
-            tokenizer_dir=TOKENIZER_DIR,
-            model_dir=out_dir if (out_dir / "MODEL_READY").exists() else None,
-            eval_path=Path(config.get("eval_path","")) if config.get("eval_path") else None,
-            config=config
-        )
-
-        status = "completed"
-        _JOBS[job_id]["status"] = status
-        set_status(job_id, status)
-        _write_log(logf, "done.")
+        _finish_and_report(job_id, user_id, out_dir, logf, config, ok=True)
     except Exception as e:
-        status = "failed"
-        _JOBS[job_id]["status"] = status
-        set_status(job_id, status)
         _write_log(logf, f"ERROR: {e}")
+        _finish_and_report(job_id, user_id, out_dir, logf, config, ok=False)
 
+# -------------------- RUNPOD BACKEND --------------------
+def _run_runpod_training(job_id: str, user_id: str, config: dict):
+    _JOBS[job_id]["status"] = "queued"; set_status(job_id, "queued")
+    logf = logs_path(user_id, job_id)
+    out_dir = model_dir(user_id, job_id)
+    _JOBS[job_id]["logs_path"] = str(logf)
+    _JOBS[job_id]["model_dir"] = str(out_dir)
+    set_model_dir(job_id, str(out_dir))
+
+    _write_log(logf, f"[{job_id}] submitting to RunPod; user={user_id}")
+    _write_log(logf, f"config={config}")
+
+    # Build command for worker image (Dockerfile.train)
+    cmd = [
+        "python", "src/training/train_text.py",
+        "--tokenizer_dir", "/app/outputs/tokenizer/orph_bpe_32k",
+        "--train_files", config.get("sft_path", "/app/data/clean/text_supervised.jsonl"),
+        "--cot_files", config.get("cot_path", ""),
+        "--curriculum", config.get("curriculum", "sft:1.0,cot:0.0"),
+        "--model_name", config.get("base_model", "gpt2"),
+        "--output_dir", f"/app/outputs/user_models/{user_id}/{job_id}",
+        "--max_length", str(config.get("max_length", 1024)),
+        "--epochs", str(config.get("epochs", 1)),
+        "--train_batch_size", str(config.get("train_batch_size", 2)),
+        "--grad_accum", str(config.get("grad_accum", 8)),
+        "--lr", str(config.get("lr", 5e-5)),
+        "--gradient_checkpointing", str(config.get("gradient_checkpointing", "true")),
+        "--auto_batch", "true",
+    ]
+
+    # Submit job
+    api_key = os.getenv("RUNPOD_API_KEY", "")
+    image = os.getenv("RUNPOD_IMAGE", "ghcr.io/you/orph-train:latest")  # build & push your train image
+    env = {
+        "RUN_ID": job_id,
+        "USER_ID": user_id,
+        # add storage creds (S3/GCS) here if needed
+    }
+
+    handle = rp.submit_training(api_key=api_key, image=image, command=cmd, env=env)
+    _write_log(logf, f"[runpod] submitted backend_id={handle.backend_id}")
+    _JOBS[job_id]["status"] = "running"; set_status(job_id, "running")
+
+    try:
+        # Simplified poll loop (every ~15s). Replace with webhook or better polling.
+        for _ in range(6):
+            time.sleep(15)
+            status = rp.poll_status(handle.job_id)
+            _write_log(logf, rp.fetch_logs(handle.job_id))
+            if status in ("completed","failed"):
+                break
+
+        ok = (rp.poll_status(handle.job_id) == "completed")
+        if ok:
+            # In a real setup, artifacts are written to shared storage (S3/GCS).
+            # For demo, mark MODEL_READY so reporter runs.
+            (out_dir / "MODEL_READY").write_text("ok", encoding="utf-8")
+
+        _finish_and_report(job_id, user_id, out_dir, logf, config, ok=ok)
+
+    except Exception as e:
+        _write_log(logf, f"[runpod] ERROR: {e}")
+        _finish_and_report(job_id, user_id, out_dir, logf, config, ok=False)
+
+# -------------------- PUBLIC API --------------------
 def submit_job(user_id: str, config: dict) -> str:
     job_id = uuid.uuid4().hex[:12]
     _JOBS[job_id] = {"status": "queued", "user_id": user_id, "config": config}
     upsert_registry_entry(job_id, user_id, "queued", "", config)
-    t = threading.Thread(target=_run_local_training, args=(job_id, user_id, config), daemon=True)
+
+    backend = os.getenv("ORPH_CLOUD_BACKEND", CLOUD_BACKEND).lower()
+    runner = _run_runpod_training if backend == "runpod" else _run_local_training
+    t = threading.Thread(target=runner, args=(job_id, user_id, config), daemon=True)
     t.start()
     return job_id
 
