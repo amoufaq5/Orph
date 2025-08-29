@@ -1,20 +1,5 @@
-# Core ML
-torch            # install with CUDA-specific command from pytorch.org if you have a GPU
-torchvision
-transformers
-sentencepiece
-tokenizers
-
-# Data & utils
-pandas
-pyyaml
-scikit-learn
-Pillow
-python-dotenv
-
-# API
-Flask
+flask
 flask-cors
-
-# Dev & tests
-pytest
+reportlab
+transformers==4.43.3
+torch==2.3.1; platform_system != "Darwin"  # optional CPU on mac if you want: remove the marker
