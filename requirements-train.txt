@@ -1,0 +1,7 @@
+transformers==4.43.3
+accelerate>=0.30.0
+datasets
+evaluate
+sentencepiece
+bitsandbytes==0.43.1
+tensorboard
