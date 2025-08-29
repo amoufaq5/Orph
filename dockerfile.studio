@@ -1,0 +1,26 @@
+# Dockerfile.studio
+FROM python:3.11-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
+
+# System deps for reportlab (PDF), fonts
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential gcc libfreetype6-dev libjpeg62-turbo-dev zlib1g-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy only requirements first for layer caching
+COPY requirements.txt /app/requirements.txt
+RUN pip install -r /app/requirements.txt
+
+# Copy project
+COPY . /app
+
+# Create expected folders
+RUN mkdir -p data/user_datasets outputs/user_models outputs/studio_logs outputs/tokenizer/orph_bpe_32k
+
+EXPOSE 5055
+CMD ["python", "src/studio/app.py"]
