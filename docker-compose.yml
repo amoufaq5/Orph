@@ -1,0 +1,18 @@
+version: "3.8"
+services:
+  studio:
+    build:
+      context: .
+      dockerfile: Dockerfile.studio
+    image: orph/studio:dev
+    environment:
+      - ORPH_CLOUD_BACKEND=local        # switch to 'runpod' later
+      - FLASK_ENV=development
+    ports:
+      - "5055:5055"
+    volumes:
+      - ./data:/app/data
+      - ./outputs:/app/outputs
+      - ./src:/app/src
+      - ./README.md:/app/README.md:ro
+    restart: unless-stopped
