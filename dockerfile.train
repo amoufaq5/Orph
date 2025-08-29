@@ -1,0 +1,21 @@
+# Dockerfile.train
+FROM pytorch/pytorch:2.3.1-cuda11.8-cudnn8-runtime
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
+
+WORKDIR /app
+
+# Install basics + git (if you want to pull private repos)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git build-essential && rm -rf /var/lib/apt/lists/*
+
+COPY requirements-train.txt /app/requirements-train.txt
+RUN pip install -r /app/requirements-train.txt
+
+# Copy code (or git clone in entrypoint if private)
+COPY . /app
+
+# Default command can be overridden by RunPod/GCP job
+CMD ["python", "src/training/train_text.py", "--help"]
