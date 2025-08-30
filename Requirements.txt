@@ -3,3 +3,7 @@ flask-cors
 reportlab
 transformers==4.43.3
 torch==2.3.1; platform_system != "Darwin"  # optional CPU on mac if you want: remove the marker
+kaggle
+pyyaml
+tqdm
+
