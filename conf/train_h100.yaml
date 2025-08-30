@@ -1,0 +1,43 @@
+# Orph training on 1x H100 SXM (80 GB)
+
+data:
+  train_file: /workspace/data/clean/train.jsonl
+  val_file: /workspace/data/clean/val.jsonl
+  tokenizer_path: /workspace/data/tokenizer
+  seq_length: 1024
+  num_workers: 16          # you have 20 vCPU
+
+model:
+  type: orph_gpt           # <-- your custom model in src/modeling/orphgpt_model.py
+  vocab_size: 32000        # match your tokenizer
+  d_model: 1024            # hidden size
+  n_layers: 24
+  n_heads: 16
+  mlp_ratio: 4.0           # feed-forward expansion
+  dropout: 0.1
+  rotary_embeddings: true  # if your model supports RoPE
+  norm_type: rms           # "layernorm" or "rms" depending on your code
+  tie_word_embeddings: true
+
+training:
+  precision: bf16              # Hopper prefers bf16
+  batch_size_per_device: 4     # per-GPU micro-batch
+  grad_accum_steps: 8          # effective batch = 32
+  epochs: 3
+  max_steps: null
+  lr: 3.0e-4
+  warmup_steps: 2000
+  weight_decay: 0.01
+  gradient_checkpointing: true
+  compile: true                # torch.compile if supported
+  ckpt_dir: /workspace/data/checkpoints
+  save_every_steps: 1000
+  log_every_steps: 100
+  seed: 42
+
+eval:
+  eval_every_steps: 1000
+  eval_split: 0.01             # 1% of data for quick sanity checks
+
+io:
+  logs_dir: /workspace/data/logs
