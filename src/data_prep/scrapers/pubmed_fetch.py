@@ -8,8 +8,8 @@ from pathlib import Path
 from xml.etree import ElementTree as ET
 from ._common import RAW_OUT, write_jsonl, http_get, backoff_sleep
 
-EMAIL = os.getenv("NCBI_EMAIL", "")          # set to be polite: your@email
-API_KEY = os.getenv("NCBI_API_KEY", "")      # optional NCBI key for higher rate
+EMAIL = os.getenv("NCBI_EMAIL", "abdulrahman.moufak@gmail.com")          # set to be polite: your@email
+API_KEY = os.getenv("NCBI_API_KEY", "7e91b19d102e4b119461ffc2b05cb25a4708")      # optional NCBI key for higher rate
 TERM = '(english[Language]) AND (humans[MeSH Terms]) AND (review[Publication Type])'
 # For PMC Open Access subset, you can target pmc oa ids via separate APIs later.
 
