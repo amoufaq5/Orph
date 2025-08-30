@@ -108,3 +108,10 @@ def get_by_job(job_id: str):
         if it.get("job_id") == job_id:
             return it
     return None
+
+# ---- dataset build artifacts ----
+def build_job_dir(user_id: str, job_id: str) -> Path:
+    p = MODELS_DIR / user_id / f"build_{job_id}"
+    p.mkdir(parents=True, exist_ok=True)
+    return p
+
