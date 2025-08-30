@@ -4,6 +4,7 @@ from pathlib import Path
 from .config import TOKENIZER_DIR, ROOT, CLOUD_BACKEND
 from .storage import model_dir, logs_path, upsert_registry_entry, set_status, set_model_dir
 from . import reporter
+import shutil
 
 # Optional: RunPod adapter
 from .adapters import runpod_adapter as rp
@@ -37,6 +38,69 @@ def _finish_and_report(job_id, user_id, out_dir: Path, logf: Path, config: dict,
     _JOBS[job_id]["status"] = status
     set_status(job_id, status)
     _write_log(logf, status)
+
+
+# -------------------- DATASET BUILD BACKEND (local) --------------------
+def _run_build_dataset(job_id: str, user_id: str, config: dict):
+    """
+    Runs src/data_prep/build_dataset.py and captures artifacts into a per-job dir.
+    Config accepts:
+      {
+        "seed": 42,
+        "train_ratio": 0.94, "val_ratio": 0.03, "test_ratio": 0.03
+      }
+    """
+    _JOBS[job_id]["status"] = "running"; set_status(job_id, "running")
+    logf = logs_path(user_id, job_id)
+    out_dir = build_job_dir(user_id, job_id)
+    _JOBS[job_id]["logs_path"] = str(logf)
+    _JOBS[job_id]["model_dir"] = str(out_dir)   # reuse for downloads/report endpoints
+    set_model_dir(job_id, str(out_dir))
+    add_tag(job_id, "build")
+
+    def _log(s): _write_log(logf, s)
+
+    try:
+        _log(f"[{job_id}] starting dataset build; user={user_id}")
+        _log(f"config={config}")
+
+        # Assemble CLI
+        args = [
+            sys.executable, "src/data_prep/build_dataset.py",
+            "--seed", str(config.get("seed", 42)),
+            "--train_ratio", str(config.get("train_ratio", 0.94)),
+            "--val_ratio", str(config.get("val_ratio", 0.03)),
+            "--test_ratio", str(config.get("test_ratio", 0.03)),
+        ]
+        _log("cmd: " + " ".join(args))
+        r = subprocess.run(args, cwd=str(ROOT), capture_output=True, text=True)
+        if r.stdout: _log(r.stdout.strip())
+        if r.stderr: _log("[stderr] " + r.stderr.strip())
+        if r.returncode != 0:
+            raise RuntimeError(f"build_dataset.py exited {r.returncode}")
+
+        # Copy artifacts into this job's dir for easy retrieval
+        clean_dir = ROOT / "data" / "clean"
+        for name in ["text_supervised.jsonl", "text_cot.jsonl", "stats.json"]:
+            src = clean_dir / name
+            if src.exists():
+                shutil.copy2(src, out_dir / name)
+        # Write a tiny manifest
+        (out_dir / "BUILD_READY").write_text("ok", encoding="utf-8")
+        (out_dir / "build_report.json").write_text(
+            json.dumps({
+                "job_id": job_id,
+                "user_id": user_id,
+                "artifacts": [p.name for p in out_dir.glob("*") if p.is_file()],
+            }, ensure_ascii=False, indent=2),
+            encoding="utf-8"
+        )
+
+        _JOBS[job_id]["status"] = "completed"; set_status(job_id, "completed")
+        _log("done.")
+    except Exception as e:
+        _JOBS[job_id]["status"] = "failed"; set_status(job_id, "failed")
+        _log(f"ERROR: {e}")
 
 # -------------------- LOCAL BACKEND --------------------
 def _run_local_training(job_id: str, user_id: str, config: dict):
