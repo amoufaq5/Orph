@@ -5,3 +5,7 @@ evaluate
 sentencepiece
 bitsandbytes==0.43.1
 tensorboard
+kaggle
+pyyaml
+tqdm
+
