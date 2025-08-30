@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
+# Orph end-to-end pipeline runner: Kaggle -> API scrapes -> clean/build -> tokenizer -> train (OrphGPT)
+# Works on 1x or multi-GPU. Reads configs from conf/.
+
 set -euo pipefail
 
-# Persistent dirs on RunPod volume:
+# ----------------- Paths (persisted on RunPod volume) -----------------
 RAW_DIR="${RAW_DIR:-/workspace/data/raw}"
 KAGGLE_DIR="${KAGGLE_DIR:-/workspace/data/raw/kaggle}"
 CLEAN_DIR="${CLEAN_DIR:-/workspace/data/clean}"
@@ -9,33 +12,60 @@ CKPT_DIR="${CKPT_DIR:-/workspace/data/checkpoints}"
 TOKENIZER_DIR="${TOKENIZER_DIR:-/workspace/data/tokenizer}"
 LOG_DIR="${LOG_DIR:-/workspace/data/logs}"
 
-# Modes
-MODE="${MODE:-ALL}"   # ALL | KAGGLE_ONLY | SCRAPE_ONLY | CLEAN_ONLY | BUILD_ONLY | TOKENIZER_ONLY | PRETRAIN_ONLY | TRAIN_ONLY
-
-# Kaggle flags (safe defaults)
-KAGGLE_CATALOG="${KAGGLE_CATALOG:-config/kaggle_catalog.yaml}"
-KAGGLE_ENABLE_HEAVY="${KAGGLE_ENABLE_HEAVY:-false}"    # true to include heavy sections
-KAGGLE_ONLY_KEYS="${KAGGLE_ONLY_KEYS:-}"               # space-separated keys to restrict (e.g. "pubmed_qa medmcqa")
-KAGGLE_MAX_ITEMS="${KAGGLE_MAX_ITEMS:-0}"              # 0 = unlimited
-KAGGLE_SLEEP="${KAGGLE_SLEEP:-0.0}"
-
 mkdir -p "$RAW_DIR" "$KAGGLE_DIR" "$CLEAN_DIR" "$CKPT_DIR" "$TOKENIZER_DIR" "$LOG_DIR"
 
-log(){ echo "[orph]" "$@"; }
+# ----------------- Modes -----------------
+# ALL | KAGGLE_ONLY | SCRAPE_ONLY | CLEAN_ONLY | BUILD_ONLY | TOKENIZER_ONLY | PRETRAIN_ONLY | TRAIN_ONLY
+MODE="${MODE:-ALL}"
 
+# ----------------- Config (H100 defaults) -----------------
+# You can point to conf/train_h100_2gpu.yaml when using >1 GPU
+TRAIN_CONFIG="${TRAIN_CONFIG:-conf/train_h100.yaml}"
+
+# ----------------- Kaggle controls -----------------
+KAGGLE_CATALOG="${KAGGLE_CATALOG:-conf/kaggle_catalog.yaml}"
+KAGGLE_ENABLE_HEAVY="${KAGGLE_ENABLE_HEAVY:-false}"     # true to pull heavy categories
+KAGGLE_ONLY_KEYS="${KAGGLE_ONLY_KEYS:-}"                # e.g. "pubmed_qa medmcqa"
+KAGGLE_MAX_ITEMS="${KAGGLE_MAX_ITEMS:-0}"               # 0 = unlimited
+KAGGLE_SLEEP="${KAGGLE_SLEEP:-0.0}"
+
+# ----------------- Helpers -----------------
+log() { echo "[orph] $*"; }
+exists() { command -v "$1" >/dev/null 2>&1; }
+
+gpu_count() {
+  if exists nvidia-smi; then
+    nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | wc -l | tr -d ' '
+  else
+    echo 0
+  fi
+}
+
+# prefer these training entrypoints in order:
+TRAIN_ENTRY=""
+if [[ -f src/training/train_from_scratch.py ]]; then
+  TRAIN_ENTRY="src/training/train_from_scratch.py"
+elif [[ -f src/training/train_text.py ]]; then
+  TRAIN_ENTRY="src/training/train_text.py"
+elif [[ -f scripts/make_pretrain_from_supervised.py ]]; then
+  TRAIN_ENTRY="scripts/make_pretrain_from_supervised.py"
+fi
+
+# ----------------- Stages -----------------
 kaggle_stage() {
   log "KAGGLE stage"
-  local args=( --out "$KAGGLE_DIR" --catalog "$KAGGLE_CATALOG" )
-  if [[ "$KAGGLE_ENABLE_HEAVY" == "true" ]]; then args+=( --enable-heavy ); fi
-  if [[ -n "$KAGGLE_ONLY_KEYS" ]]; then args+=( --only $KAGGLE_ONLY_KEYS ); fi
-  if [[ "$KAGGLE_MAX_ITEMS" != "0" ]]; then args+=( --max-items "$KAGGLE_MAX_ITEMS" ); fi
-  if [[ "$KAGGLE_SLEEP" != "0.0" ]]; then args+=( --sleep "$KAGGLE_SLEEP" ); fi
-
-  if [[ -f src/data_prep/scrapers/kaggle_fetch.py ]]; then
-    python src/data_prep/scrapers/kaggle_fetch.py "${args[@]}" 2>&1 | tee -a "$LOG_DIR/kaggle_fetch.log" || true
-  else
-    log "kaggle_fetch.py not found; skipping"
+  if [[ ! -f src/data_prep/scrapers/kaggle_fetch.py ]]; then
+    log "kaggle_fetch.py not found -> skipping"
+    return 0
   fi
+
+  local args=( --out "$KAGGLE_DIR" --catalog "$KAGGLE_CATALOG" )
+  [[ "$KAGGLE_ENABLE_HEAVY" == "true" ]] && args+=( --enable-heavy )
+  [[ -n "$KAGGLE_ONLY_KEYS" ]] && args+=( --only $KAGGLE_ONLY_KEYS )
+  [[ "$KAGGLE_MAX_ITEMS" != "0" ]] && args+=( --max-items "$KAGGLE_MAX_ITEMS" )
+  [[ "$KAGGLE_SLEEP/1" != "0.0/1" ]] && args+=( --sleep "$KAGGLE_SLEEP" )
+
+  python src/data_prep/scrapers/kaggle_fetch.py "${args[@]}" 2>&1 | tee -a "$LOG_DIR/kaggle_fetch.log" || true
 }
 
 scrape_api_stage() {
@@ -109,33 +139,48 @@ tokenizer_stage() {
   elif [[ -f src/training/train_tokenizer.py ]]; then
     python src/training/train_tokenizer.py --data "$CLEAN_DIR" --out "$TOKENIZER_DIR"
   else
-    log "no tokenizer script found; skipping"
+    log "no tokenizer entry found; skipping"
   fi
 }
 
 train_stage() {
-  log "PRETRAIN/TRAIN stage"
-  if [[ -f scripts/make_pretrain_from_supervised.py ]]; then
-    python scripts/make_pretrain_from_supervised.py --data "$CLEAN_DIR" --out "$CKPT_DIR"
-  elif [[ -f src/training/train_from_scratch.py ]]; then
-    python src/training/train_from_scratch.py --data_dir "$CLEAN_DIR" --ckpt_dir "$CKPT_DIR"
-  elif [[ -f src/training/train_text.py ]]; then
-    python src/training/train_text.py --data_dir "$CLEAN_DIR" --ckpt_dir "$CKPT_DIR"
-  else
-    log "no pretrain/train entry found; skipping"
+  log "TRAIN (OrphGPT) stage"
+  if [[ -z "$TRAIN_ENTRY" ]]; then
+    log "no training entrypoint found; expected one of:
+         src/training/train_from_scratch.py | src/training/train_text.py | scripts/make_pretrain_from_supervised.py"
+    return 0
   fi
+
+  local cmd=( python "$TRAIN_ENTRY" )
+  if [[ -f "$TRAIN_CONFIG" ]]; then
+    cmd+=( --config "$TRAIN_CONFIG" )
+  else
+    # fallback: pass minimal dirs if your script doesn't support --config
+    cmd+=( --data_dir "$CLEAN_DIR" --ckpt_dir "$CKPT_DIR" )
+  fi
+
+  local gpus
+  gpus=$(gpu_count)
+  if [[ "$gpus" -ge 2 ]]; then
+    log "Detected $gpus GPUs -> using torchrun"
+    cmd=( torchrun --nproc_per_node="$gpus" "$TRAIN_ENTRY" )
+    [[ -f "$TRAIN_CONFIG" ]] && cmd+=( --config "$TRAIN_CONFIG" ) || cmd+=( --data_dir "$CLEAN_DIR" --ckpt_dir "$CKPT_DIR" )
+  fi
+
+  echo "[cmd] ${cmd[*]}"
+  "${cmd[@]}" 2>&1 | tee -a "$LOG_DIR/train.log"
 }
 
+# ----------------- Driver -----------------
 case "$MODE" in
   KAGGLE_ONLY)     kaggle_stage ;;
   SCRAPE_ONLY)     scrape_api_stage ;;
   CLEAN_ONLY)      clean_stage ;;
   BUILD_ONLY)      build_stage ;;
   TOKENIZER_ONLY)  tokenizer_stage ;;
-  PRETRAIN_ONLY)   train_stage ;;
-  TRAIN_ONLY)      train_stage ;;
+  PRETRAIN_ONLY|TRAIN_ONLY)  train_stage ;;
   ALL)             kaggle_stage; scrape_api_stage; clean_stage; build_stage; tokenizer_stage; train_stage ;;
-  *)               echo "Unknown MODE=$MODE"; exit 1 ;;
+  *)               echo "Unknown MODE=${MODE}"; exit 1 ;;
 esac
 
-log "done."
+log "Pipeline complete."
