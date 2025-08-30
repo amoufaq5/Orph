@@ -1,0 +1,41 @@
+# Kaggle catalog for medical NLP + Imaging.
+# Toggle True/False or use CLI flags --only … / --enable-heavy to control scope.
+
+nlp_core:
+  enabled: true
+  items:
+    # PubMed QA / RCT / MCQ / Reviews
+    - { key: pubmed_qa,           slug: "junseongkim/pmqa-pubmed-question-answer-dataset", type: dataset, enabled: true }
+    - { key: pubmed_200k_rct,     slug: "zhangjuefei/pubmed-rct",                           type: dataset, enabled: true }
+    - { key: medmcqa,             slug: "vineethakkinapalli/medmcqa",                       type: dataset, enabled: true }
+    - { key: drugscom_reviews,    slug: "jessicali9530/drug-reviews",                       type: dataset, enabled: true }
+    - { key: webmd_reviews,       slug: "praveengovi/webmd-reviews-dataset",                type: dataset, enabled: true }
+    - { key: medical_dialogs,     slug: "nidzshah/medical-dialogue-dataset",                type: dataset, enabled: false }
+
+guidelines_regulatory:
+  enabled: true
+  items:
+    - { key: openfda_labeling,    slug: "dbatten5/drug-labeling",                            type: dataset, enabled: true }
+    - { key: dailymed_spls,       slug: "eliotbarr/dailymed-structured-product-labels",     type: dataset, enabled: false }
+
+clinical_literature:
+  enabled: false     # huge; turn on with --enable-heavy
+  items:
+    - { key: cord19,              slug: "allen-institute-for-ai/CORD-19-research-challenge", type: dataset, enabled: false }
+    - { key: clinical_trials,     slug: "dheerajmpai/clinical-trials",                        type: dataset, enabled: false }
+
+imaging_core:
+  enabled: false
+  items:
+    - { key: rsna_pneumonia,      slug: "paultimothymooney/chest-xray-pneumonia",           type: dataset, enabled: false }
+    - { key: siim_acr_pneumo,     slug: "awsaf49/siim-acr-pneumothorax-segmentation-data",  type: dataset, enabled: false }
+    - { key: covid19_radiography, slug: "tawsifurrahman/covid19-radiography-database",      type: dataset, enabled: false }
+    - { key: vinbig_cxr,          slug: "hustvl/vinbigdata-chest-xray-abnormalities",       type: dataset, enabled: false }
+
+imaging_heavy:
+  enabled: false     # very large; turn on with --enable-heavy
+  items:
+    # NOTE: these slugs can change; enable selectively and verify if needed.
+    - { key: chestxray14,         slug: "nih-chest-xrays/data",                              type: dataset, enabled: false }
+    # CheXpert is typically not on Kaggle officially; keep disabled unless you add a valid slug.
+    - { key: chexpert_like,       slug: "placeholder/chexpert",                              type: dataset, enabled: false }
