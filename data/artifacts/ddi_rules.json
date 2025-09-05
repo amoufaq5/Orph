@@ -1,0 +1,19 @@
+{
+  "synonyms": {
+    "ibuprofen": ["nurofen", "advil", "motrin"],
+    "warfarin": ["coumadin"],
+    "clarithromycin": ["biaxin"],
+    "simvastatin": ["zocor"]
+  },
+  "pairs": [
+    {"a":"ibuprofen", "b":"warfarin", "note":"↑ bleeding risk (avoid or monitor INR)"},
+    {"a":"clarithromycin", "b":"simvastatin", "note":"↑ statin levels (rhabdomyolysis risk) — avoid"}
+  ],
+  "classes": [
+    {"classA":["macrolide"], "classB":["statin"], "note":"Some macrolides ↑ statin levels — prefer pravastatin or hold statin"}
+  ],
+  "class_members": {
+    "macrolide": ["clarithromycin","erythromycin","azithromycin"],
+    "statin": ["simvastatin","atorvastatin","lovastatin","rosuvastatin","pravastatin"]
+  }
+}
