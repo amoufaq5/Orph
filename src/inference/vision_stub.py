@@ -1,18 +1,26 @@
 from PIL import Image
 import numpy as np
+import os
 
-def classify_image_placeholder(img: Image.Image) -> dict:
-    # TODO: replace with real model inferencing
-    w,h = img.size
-    finding = "No acute cardiopulmonary abnormality (placeholder)"
-    prob = 0.51
-    return {"finding": finding, "prob": prob, "size": [w,h]}
+_USE_REAL = os.getenv("ORPH_USE_VIT_CAM", "0") == "1"
 
-def gradcam_placeholder(img: Image.Image) -> np.ndarray:
-    # Returns a normalized heatmap 0..1 same size as image
+if _USE_REAL:
+    from .gradcam_vit import ViTExplainer
+    _explainer = ViTExplainer()
+else:
+    _explainer = None
+
+def classify_image(img: Image.Image):
+    if _explainer is None:
+        # Fallback: same behavior as before
+        w,h = img.size
+        return {"finding": "Placeholder finding (enable ORPH_USE_VIT_CAM=1 for ViT Grad-CAM)", "prob": 0.5, "size": [w,h]}, _fake_heatmap(img)
+    label, conf, cam = _explainer.predict_and_cam(img)
+    return {"finding": f"Top-1: {label}", "prob": conf}, cam
+
+def _fake_heatmap(img: Image.Image) -> np.ndarray:
     w,h = img.size
     hm = np.zeros((h,w), dtype=np.float32)
-    # simple radial blob for demo
     cy, cx = h//2, w//2
     yy, xx = np.ogrid[:h, :w]
     dist = np.sqrt((yy-cy)**2 + (xx-cx)**2)
