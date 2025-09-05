@@ -1,94 +1,121 @@
-import os, time, math, argparse, xml.etree.ElementTree as ET
-import requests
-from typing import Iterator, Dict, List
-from .base import Scraper, mk_id
-from src.utils.logger import get_logger
-log = get_logger("pubmed")
+# src/data_prep/scrapers/pubmed.py
+import os, time
+from typing import Iterator, Dict, Any, List
+from .base import Scraper, req_json, DEFAULT_USER_AGENT
 
 EUTILS = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils"
-API_KEY = os.getenv("5fa3b3391d1cb5dd412e9092373d68385c08")  # optional; improves limits
+API_KEY = os.getenv("NCBI_API_KEY")
+CONTACT = os.getenv("SCRAPER_EMAIL", "noreply@example.com")
 
-def _req(url, params, sleep=0.34, tries=5):
-    # ~3 req/s without key; be polite
-    for t in range(tries):
-        r = requests.get(url, params=params, timeout=30)
-        if r.status_code == 200:
-            if sleep: time.sleep(sleep)
-            return r
-        time.sleep(1.5 * (t+1))
-    r.raise_for_status()
-
-def esearch(term: str, mindate=None, maxdate=None, retmax=10000) -> List[str]:
+def esearch(term: str, mindate: str | None = None, maxdate: str | None = None,
+            retstart: int = 0, retmax: int = 0) -> tuple[list[str], int, str | None, str | None]:
     params = {
-        "db":"pubmed","term":term,"retmax":0,"retmode":"json"
+        "db": "pubmed",
+        "term": term,
+        "retmode": "json",
+        "retstart": retstart,
+        "retmax": retmax,       # use 0 when you only need count + history
+        "usehistory": "y",
+        "sort": "date",
     }
-    if API_KEY: params["api_key"]=API_KEY
-    if mindate or maxdate:
-        params["term"] += f" AND ({mindate or '1800'}:{maxdate or '3000'}[dp])"
-    j = _req(f"{EUTILS}/esearch.fcgi", params).json()
-    count = int(j["esearchresult"]["count"])
-    log.info(f"[pubmed] found {count} ids for term='{term}'")
-    ids = []
-    for start in range(0, count, retmax):
-        p = {"db":"pubmed","retmode":"json","retstart":start,"retmax":retmax}
-        if API_KEY: p["api_key"]=API_KEY
-        p["term"] = params["term"]
-        js = _req(f"{EUTILS}/esearch.fcgi", p).json()
-        ids.extend(js["esearchresult"]["idlist"])
-    return ids
+    if API_KEY: params["api_key"] = API_KEY
+    if mindate: params["mindate"] = mindate
+    if maxdate: params["maxdate"] = maxdate
 
-def efetch_xml(pmid_chunk: List[str]) -> str:
-    p = {"db":"pubmed","retmode":"xml","id":",".join(pmid_chunk)}
-    if API_KEY: p["api_key"]=API_KEY
-    return _req(f"{EUTILS}/efetch.fcgi", p).text
+    js = req_json(f"{EUTILS}/esearch.fcgi", params, headers={"User-Agent": f"Orph/1.0 ({CONTACT})"})
+    es = js["esearchresult"]
+    ids = es.get("idlist", [])
+    count = int(es["count"])
+    return ids, count, es.get("webenv"), es.get("querykey")
 
-def parse_pubmed_xml(xml_text: str) -> Iterator[Dict]:
-    root = ET.fromstring(xml_text)
-    for art in root.findall(".//PubmedArticle"):
-        # Title
-        title = (art.findtext(".//ArticleTitle") or "").strip()
-        # Abstract (may be multiple AbstractText nodes)
-        abs_parts = [a.text or "" for a in art.findall(".//Abstract/AbstractText")]
-        abstract = " ".join(x.strip() for x in abs_parts if x).strip()
-        # Date
-        year = art.findtext(".//PubDate/Year") or art.findtext(".//PubDate/MedlineDate") or ""
-        # DOI
-        doi = ""
-        for idn in art.findall(".//ArticleIdList/ArticleId"):
-            if idn.attrib.get("IdType") == "doi":
-                doi = (idn.text or "").strip()
-        if not (title or abstract):
-            continue
-        yield {
-            "id": mk_id("pubmed"),
-            "modality": ["text"],
-            "task": "summarize",
-            "text": f"{title} — {abstract}",
-            "answer": None,
-            "rationale": None,
-            "labels": {},
-            "meta": {"source":"pubmed","pubdate":year,"doi":doi,"license":"public-domain"},
-            "split":"train"
+def iter_all_ids(term: str, mindate: str | None = None, maxdate: str | None = None,
+                 step: int = 10000) -> Iterator[List[str]]:
+    _, count, webenv, qk = esearch(term, mindate, maxdate, retmax=0)
+    got = 0
+    while got < count:
+        params = {
+            "db": "pubmed",
+            "retmode": "json",
+            "retstart": got,
+            "retmax": min(step, count - got),
+            "usehistory": "y",
+            "query_key": qk,
+            "WebEnv": webenv,
         }
+        if API_KEY: params["api_key"] = API_KEY
+        js = req_json(f"{EUTILS}/esearch.fcgi", params, headers={"User-Agent": f"Orph/1.0 ({CONTACT})"})
+        batch = js["esearchresult"].get("idlist", [])
+        if not batch:
+            break
+        yield batch
+        got += len(batch)
+
+def efetch(pmids: List[str]) -> Dict[str, Any]:
+    # Use JSON where possible; EFetch for PubMed primarily returns XML,
+    # but we can request JSON via 'retmode=json' on ESummary for metadata,
+    # then EFetch for details as XML if you need full MEDLINE (handle separately).
+    # Here we’ll use ESummary (JSON) for robustness.
+    params = {
+        "db": "pubmed",
+        "id": ",".join(pmids),
+        "retmode": "json",
+        "retmax": len(pmids),
+    }
+    if API_KEY: params["api_key"] = API_KEY
+    return req_json(f"{EUTILS}/esummary.fcgi", params, headers={"User-Agent": f"Orph/1.0 ({CONTACT})"})
 
 class PubMedScraper(Scraper):
-    name = "pubmed"
-    def __init__(self, out_dir: str, term: str, mindate: str|None, maxdate: str|None, chunk: int):
-        super().__init__(out_dir); self.term=term; self.mindate=mindate; self.maxdate=maxdate; self.chunk=chunk
+    def __init__(self, out_dir: str, term: str, mindate: str | None, maxdate: str | None, chunk: int = 500):
+        super().__init__(out_dir)
+        self.term = term
+        self.mindate = mindate
+        self.maxdate = maxdate
+        self.chunk = max(1, min(chunk, 1000))
 
-    def stream(self) -> Iterator[Dict]:
-        ids = esearch(self.term, self.mindate, self.maxdate)
-        for i in range(0, len(ids), self.chunk):
-            xml = efetch_xml(ids[i:i+self.chunk])
-            for row in parse_pubmed_xml(xml):
-                yield row
+    def stream(self) -> Iterator[Dict[str, Any]]:
+        # Log once: count
+        _, count, _, _ = esearch(self.term, self.mindate, self.maxdate, retmax=0)
+        print(f"[pubmed] found {count} ids for term='{self.term}'")
+
+        for id_batch in iter_all_ids(self.term, self.mindate, self.maxdate, step=10000):
+            # Fetch in manageable chunks for ESummary
+            for i in range(0, len(id_batch), self.chunk):
+                pmids = id_batch[i:i+self.chunk]
+                meta = efetch(pmids)
+                # Write or yield records; adapt to your writer
+                uids = meta.get("result", {}).get("uids", [])
+                for uid in uids:
+                    rec = meta["result"].get(uid)
+                    if not rec:
+                        continue
+                    # Example normalization (adapt to your schema)
+                    row = {
+                        "pmid": uid,
+                        "title": rec.get("title"),
+                        "pubdate": rec.get("pubdate"),
+                        "authors": [a.get("name") for a in rec.get("authors", [])],
+                        "journal": rec.get("fulljournalname"),
+                        "source": "pubmed_esummary",
+                    }
+                    # Your writer should dump rows to JSONL here.
+                    # For compatibility with your existing pipeline, you might have a write_jsonl(out_path, row).
+                    yield row
+                # polite pacing between ESummary calls
+                time.sleep(0.34)
 
 if __name__ == "__main__":
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--out", required=True)
-    ap.add_argument("--term", default="(clinical trial[pt] OR review[pt])")
-    ap.add_argument("--mindate", default=None)  # e.g., 2015
-    ap.add_argument("--maxdate", default=None)
-    ap.add_argument("--chunk", type=int, default=200)
-    args = ap.parse_args()
-    PubMedScraper(args.out, args.term, args.mindate, args.maxdate, args.chunk).run()
+    import argparse, json, os
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--out", required=True)
+    parser.add_argument("--term", required=True)
+    parser.add_argument("--mindate", default=None)
+    parser.add_argument("--maxdate", default=None)
+    parser.add_argument("--chunk", type=int, default=500)
+    args = parser.parse_args()
+
+    scr = PubMedScraper(args.out, args.term, args.mindate, args.maxdate, args.chunk)
+    out_path = os.path.join(args.out, "pubmed_esummary.jsonl")
+    os.makedirs(args.out, exist_ok=True)
+    with open(out_path, "a", encoding="utf-8") as f:
+        for row in scr.stream():
+            f.write(json.dumps(row, ensure_ascii=False) + "\n")
