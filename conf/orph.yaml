@@ -1,0 +1,46 @@
+project:
+  name: "Orph"
+  mode: "research"         # research | clinical
+  seed: 1337
+
+paths:
+  root: "."
+  data_root: "./data"
+  raw: "./data/raw"
+  cleaned: "./data/cleaned"
+  images: "./data/images"
+  artifacts: "./data/artifacts"
+  rag_index: "./data/artifacts/rag"
+
+data:
+  schema_version: 2
+  languages: ["en"]        # add "ar" later
+  min_text_len: 20
+  image_min_resolution: [256, 256]
+  allow_licenses: ["public-domain", "CC-BY", "CC-BY-NC", "ODbL", "MIT"]
+
+labeling:
+  enable_umls: true
+  maps:
+    icd10: "./data/artifacts/icd10_map.json"
+    snomed: "./data/artifacts/snomed_map.json"
+    rxnorm: "./data/artifacts/rxnorm_map.json"
+    meddra: "./data/artifacts/meddra_map.json"
+
+tokenizer:
+  vocab_size: 48000
+  model_type: "bpe"
+  train_corpus: "./data/cleaned/text_corpus.jsonl"
+  output_dir: "./data/artifacts/tokenizer"
+
+rag:
+  top_k: 5
+  fields: ["title", "abstract", "body", "label_text"]
+
+ui:
+  modes: ["patient","clinician","pharma","student"]
+  language: ["en","ar"]
+
+security:
+  redact_pii: true
+  triage_ruleset: "ASMETHOD+WWHAM"
