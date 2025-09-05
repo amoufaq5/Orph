@@ -1,0 +1,30 @@
+text:
+  pubmed:
+    enabled: true
+    out: "./data/raw/pubmed"
+  pmc_oa:
+    enabled: true
+    out: "./data/raw/pmc_oa"
+  dailymed:
+    enabled: true
+    out: "./data/raw/dailymed"
+  openfda_labels:
+    enabled: true
+    out: "./data/raw/openfda/labels"
+  clinicaltrials:
+    enabled: true
+    out: "./data/raw/clinicaltrials"
+  qa_sets:
+    enabled: false
+    out: "./data/raw/qa"
+
+images:
+  chexpert:
+    enabled: true
+    out: "./data/images/chexpert"
+  isic:
+    enabled: true
+    out: "./data/images/isic"
+  brats:
+    enabled: false
+    out: "./data/images/brats"
