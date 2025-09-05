@@ -5,7 +5,7 @@ from src.utils.logger import get_logger
 log = get_logger("openfda")
 
 API = "https://api.fda.gov/drug/label.json"
-API_KEY = os.getenv("OPENFDA_API_KEY")  # optional
+API_KEY = os.getenv("MqJBEGWxobpgHpZJiIsf9JgZYqPUIjVGornF9Jg5")  # optional
 LIMIT = 100
 
 def page(skip: int):
