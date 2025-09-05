@@ -3,7 +3,7 @@ from __future__ import annotations
 import os, sys, time, json
 from typing import Iterator, Dict, Any, Optional
 
-# Import guard to support both -m and direct execution
+# Import guard
 try:
     from .base import Scraper, req_json
 except ImportError:
@@ -15,39 +15,47 @@ EUTILS = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils"
 API_KEY = os.getenv("NCBI_API_KEY")
 CONTACT = os.getenv("SCRAPER_EMAIL", "noreply@example.com")
 
+_DEF_HEADERS = {"User-Agent": f"Orph/1.0 ({CONTACT})"}
+
 def esearch(term: str, mindate: Optional[str] = None, maxdate: Optional[str] = None):
     params = {
         "db": "pubmed",
         "term": term,
         "retmode": "json",
-        "retmax": 0,           # only need count + history
+        "retmax": 0,           # count + history only
         "usehistory": "y",
         "sort": "date",
+        "tool": "Orph",
+        "email": CONTACT,
     }
     if API_KEY: params["api_key"] = API_KEY
     if mindate: params["mindate"] = mindate
     if maxdate: params["maxdate"] = maxdate
-    js = req_json(f"{EUTILS}/esearch.fcgi", params, headers={"User-Agent": f"Orph/1.0 ({CONTACT})"})
+    js = req_json(f"{EUTILS}/esearch.fcgi", params, headers=_DEF_HEADERS)
     es = js["esearchresult"]
     return int(es["count"]), es.get("webenv"), es.get("querykey")
 
 def esummary_history(webenv: str, qk: str, retstart: int, retmax: int) -> Dict[str, Any]:
     params = {
         "db": "pubmed",
+        "version": "2.0",      # newer JSON shape, tends to be cleaner
         "retmode": "json",
         "retstart": retstart,
         "retmax": retmax,
         "WebEnv": webenv,
         "query_key": qk,
+        "tool": "Orph",
+        "email": CONTACT,
     }
     if API_KEY: params["api_key"] = API_KEY
-    return req_json(f"{EUTILS}/esummary.fcgi", params, headers={"User-Agent": f"Orph/1.0 ({CONTACT})"})
+    return req_json(f"{EUTILS}/esummary.fcgi", params, headers=_DEF_HEADERS)
 
 class PubMedScraper(Scraper):
-    def __init__(self, out_dir: str, term: str, mindate: Optional[str], maxdate: Optional[str], pagesize: int = 500):
+    def __init__(self, out_dir: str, term: str, mindate: Optional[str], maxdate: Optional[str], pagesize: int = 200):
         super().__init__(out_dir)
         self.term, self.mindate, self.maxdate = term, mindate, maxdate
-        self.pagesize = max(1, min(pagesize, 1000))  # 1–1000 safe
+        # keep pages modest to reduce malformed payload risks
+        self.pagesize = max(50, min(pagesize, 500))
 
     def stream(self) -> Iterator[Dict[str, Any]]:
         count, webenv, qk = esearch(self.term, self.mindate, self.maxdate)
@@ -55,9 +63,10 @@ class PubMedScraper(Scraper):
         got = 0
         while got < count:
             batch = esummary_history(webenv, qk, retstart=got, retmax=min(self.pagesize, count - got))
-            uids = batch.get("result", {}).get("uids", [])
+            res = batch.get("result", {})
+            uids = res.get("uids", [])
             for uid in uids:
-                rec = batch["result"].get(uid)
+                rec = res.get(uid)
                 if not rec:
                     continue
                 yield {
@@ -78,9 +87,7 @@ if __name__ == "__main__":
     parser.add_argument("--term", required=True)
     parser.add_argument("--mindate", default=None)
     parser.add_argument("--maxdate", default=None)
-    # primary
-    parser.add_argument("--pagesize", type=int, default=500, help="Records per ESummary page (1–1000)")
-    # backward-compatible alias
+    parser.add_argument("--pagesize", type=int, default=200, help="Records per page (50–500)")
     parser.add_argument("--chunk", type=int, dest="pagesize", help="Alias for --pagesize")
     args = parser.parse_args()
 
