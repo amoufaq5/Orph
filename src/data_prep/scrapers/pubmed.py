@@ -6,7 +6,7 @@ from src.utils.logger import get_logger
 log = get_logger("pubmed")
 
 EUTILS = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils"
-API_KEY = os.getenv("NCBI_API_KEY")  # optional; improves limits
+API_KEY = os.getenv("5fa3b3391d1cb5dd412e9092373d68385c08")  # optional; improves limits
 
 def _req(url, params, sleep=0.34, tries=5):
     # ~3 req/s without key; be polite
