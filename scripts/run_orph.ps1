@@ -9,22 +9,27 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-# Ensure venv
-if (-not (Test-Path ".\.venv\Scripts\python.exe")) {
-  Write-Error "Python venv not found at .\.venv. Activate or create it first."
-}
+# --- UTF-8 console (fixes the weird â†’ arrow) ---
+chcp 65001 | Out-Null
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
+$OutputEncoding = [Console]::OutputEncoding
+
+# --- venv python ---
 $py = ".\.venv\Scripts\python.exe"
+if (-not (Test-Path $py)) { throw "Python venv not found at .\.venv. Activate or create it first." }
 
-# Polite contact; set once in your session or here
+# --- Required layout: run from repo root where src/ exists ---
+if (-not (Test-Path ".\src")) { throw "Run this script from the project root (where .\src exists)." }
+
+# --- polite contact header for scrapers (recommended by NCBI) ---
 if (-not $env:SCRAPER_EMAIL) { $env:SCRAPER_EMAIL = "you@yourdomain.com" }
-
-# (Optional) NCBI key for higher rate limits
-# if (-not $env:NCBI_API_KEY) { $env:NCBI_API_KEY = "<5fa3b3391d1cb5dd412e9092373d68385c08>" }
+# Optional: NCBI API key to raise rate limits
+# if (-not $env:NCBI_API_KEY) { $env:NCBI_API_KEY = "<your-key>" }
 
 Write-Host "[run] PubMed ESummary scrape → $OutDir"
-& $py "src\data_prep\scrapers\pubmed.py" --out $OutDir --term $PubMedTerm --mindate $MinDate --maxdate $MaxDate
+& $py -m src.data_prep.scrapers.pubmed --out $OutDir --term $PubMedTerm --mindate $MinDate --maxdate $MaxDate
 
 Write-Host "[run] ClinicalTrials.gov scrape → $OutDir"
-& $py "src\data_prep\scrapers\clinicaltrials.py" --out $OutDir --expr $CTExpr
+& $py -m src.data_prep.scrapers.clinicaltrials --out $OutDir --expr $CTExpr
 
 Write-Host "[run] Done."
