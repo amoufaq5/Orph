@@ -1,18 +1,30 @@
+# scripts/run_orph.ps1
+param(
+  [string]$OutDir = ".\data\raw",
+  [string]$PubMedTerm = "randomized controlled trial[pt] OR review[pt]",
+  [string]$CTExpr = "COVID-19",
+  [string]$MinDate = $null,
+  [string]$MaxDate = $null
+)
+
 $ErrorActionPreference = "Stop"
 
-python -m src.data_prep.scrapers.pubmed --out data/raw/pubmed --term "randomized controlled trial[pt] OR review[pt]" --mindate 2018
-python -m src.data_prep.scrapers.clinicaltrials --out data/raw/clinicaltrials --expr "(asthma OR diabetes OR hypertension)"
-python -m src.data_prep.scrapers.openfda_labels --out data/raw/openfda/labels --max_docs 2000
-python -m src.data_prep.scrapers.dailymed --out data/raw/dailymed --max_docs 500
+# Ensure venv
+if (-not (Test-Path ".\.venv\Scripts\python.exe")) {
+  Write-Error "Python venv not found at .\.venv. Activate or create it first."
+}
+$py = ".\.venv\Scripts\python.exe"
 
-# Optional: images
-# python -m src.data_prep.scrapers.isic_ham10000 --out data/raw/isic --images_root data/images/isic --meta_csv data/images/isic/HAM10000_metadata.csv
+# Polite contact; set once in your session or here
+if (-not $env:SCRAPER_EMAIL) { $env:SCRAPER_EMAIL = "you@yourdomain.com" }
 
-python -m src.data_prep.merge.dataset_merger `
-  --inputs data/raw/pubmed data/raw/clinicaltrials data/raw/openfda/labels data/raw/dailymed `
-  --out data/cleaned/text_corpus.jsonl
+# (Optional) NCBI key for higher rate limits
+# if (-not $env:NCBI_API_KEY) { $env:NCBI_API_KEY = "<5fa3b3391d1cb5dd412e9092373d68385c08>" }
 
-python -m src.data_prep.cleaners.dedup --in_path data/cleaned/text_corpus.jsonl --out_path data/cleaned/text_corpus.dedup.jsonl --threshold 0.85
+Write-Host "[run] PubMed ESummary scrape → $OutDir"
+& $py "src\data_prep\scrapers\pubmed.py" --out $OutDir --term $PubMedTerm --mindate $MinDate --maxdate $MaxDate
 
-python -m src.rag.index_builder "data/cleaned/text_corpus.dedup.jsonl" -- out_dir data/artifacts/rag
-python -m src.tokenizer.train_tokenizer --jsonl data/cleaned/text_corpus.dedup.jsonl --out_dir data/artifacts/tokenizer --vocab_size 48000
+Write-Host "[run] ClinicalTrials.gov scrape → $OutDir"
+& $py "src\data_prep\scrapers\clinicaltrials.py" --out $OutDir --expr $CTExpr
+
+Write-Host "[run] Done."
