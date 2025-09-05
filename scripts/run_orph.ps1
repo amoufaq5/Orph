@@ -5,9 +5,14 @@ python -m src.data_prep.scrapers.clinicaltrials --out data/raw/clinicaltrials --
 python -m src.data_prep.scrapers.openfda_labels --out data/raw/openfda/labels --max_docs 2000
 python -m src.data_prep.scrapers.dailymed --out data/raw/dailymed --max_docs 500
 
+# Optional: images
+# python -m src.data_prep.scrapers.isic_ham10000 --out data/raw/isic --images_root data/images/isic --meta_csv data/images/isic/HAM10000_metadata.csv
+
 python -m src.data_prep.merge.dataset_merger `
   --inputs data/raw/pubmed data/raw/clinicaltrials data/raw/openfda/labels data/raw/dailymed `
   --out data/cleaned/text_corpus.jsonl
 
-python -m src.rag.index_builder "data/cleaned/text_corpus.jsonl" -- out_dir data/artifacts/rag
-python -m src.tokenizer.train_tokenizer --jsonl data/cleaned/text_corpus.jsonl --out_dir data/artifacts/tokenizer --vocab_size 48000
+python -m src.data_prep.cleaners.dedup --in_path data/cleaned/text_corpus.jsonl --out_path data/cleaned/text_corpus.dedup.jsonl --threshold 0.85
+
+python -m src.rag.index_builder "data/cleaned/text_corpus.dedup.jsonl" -- out_dir data/artifacts/rag
+python -m src.tokenizer.train_tokenizer --jsonl data/cleaned/text_corpus.dedup.jsonl --out_dir data/artifacts/tokenizer --vocab_size 48000
