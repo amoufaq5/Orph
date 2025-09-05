@@ -1,6 +1,7 @@
+# src/data_prep/scrapers/clinicaltrials.py
 from __future__ import annotations
 import os, sys, time, json
-from typing import Iterator, Dict, Any, List
+from typing import Iterator, Dict, Any, List, Optional
 
 try:
     from .base import Scraper, req_json
@@ -18,7 +19,7 @@ def fetch_v1(expr: str, min_rank: int, max_rank: int) -> Dict[str, Any]:
     p = {"expr": expr, "fields": FIELDS_V1, "min_rnk": min_rank, "max_rnk": max_rank, "fmt": "json"}
     return req_json(CT_V1, p, min_sleep=0.25)
 
-def try_v1_total(expr: str) -> int | None:
+def try_v1_total(expr: str) -> Optional[int]:
     try:
         js = fetch_v1(expr, 1, 1)
         return int(js["StudyFieldsResponse"]["NStudiesFound"])
@@ -50,15 +51,14 @@ def iter_v1(expr: str, page_size: int) -> Iterator[Dict[str, Any]]:
         time.sleep(0.25)
         min_rnk = max_rnk + 1
 
-def fetch_v2(query: str, page_size: int, page_token: str | None) -> Dict[str, Any]:
+def fetch_v2(query: str, page_size: int, page_token: Optional[str]) -> Dict[str, Any]:
     p = {"query.term": query, "pageSize": page_size}
     if page_token: p["pageToken"] = page_token
-    # v2 returns JSON; structure differs
     return req_json(CT_V2, p, min_sleep=0.25)
 
 def iter_v2(expr: str, page_size: int) -> Iterator[Dict[str, Any]]:
     print(f"[ct] using v2 fallback for expr='{expr}'")
-    token = None
+    token: Optional[str] = None
     while True:
         js = fetch_v2(expr, page_size, token)
         studies: List[Dict[str, Any]] = js.get("studies", [])
@@ -70,16 +70,22 @@ def iter_v2(expr: str, page_size: int) -> Iterator[Dict[str, Any]]:
             status = prot.get("statusModule", {}) or {}
             conds = prot.get("conditionsModule", {}) or {}
             design = prot.get("designModule", {}) or {}
+            contacts = prot.get("contactsLocationsModule", {}) or {}
+            locs = contacts.get("locations") or []
+            country = locs[0].get("country") if locs else None
+            start_date = (status.get("startDateStruct") or {}).get("date")
+            completion_date = (status.get("completionDateStruct") or {}).get("date")
+            phases = design.get("phases") or [None]
             yield {
                 "nct_id": ident.get("nctId"),
                 "title": ident.get("briefTitle"),
                 "condition": conds.get("conditions") or [],
                 "status": status.get("overallStatus"),
-                "phase": (design.get("phases") or [None])[0],
+                "phase": phases[0],
                 "enrollment": (design.get("enrollmentInfo") or {}).get("count"),
-                "country": (prot.get("contactsLocationsModule", {}) or {}).get("locations", [{}])[0].get("country"),
-                "start_date": (status.get("startDateStruct") or {}).get("date"),
-                "completion_date": (status.get("completionDateStruct") or {}).get("date"),
+                "country": country,
+                "start_date": start_date,
+                "completion_date": completion_date,
                 "source": "clinicaltrials.gov_v2",
             }
         token = js.get("nextPageToken")
@@ -94,7 +100,6 @@ class ClinicalTrialsScraper(Scraper):
         self.page_size = max(20, min(page_size, 1000))
 
     def stream(self) -> Iterator[Dict[str, Any]]:
-        # Try v1 first; if it yielded nothing (404 or non-JSON), switch to v2.
         yielded = False
         for row in iter_v1(self.expr, self.page_size):
             yielded = True
