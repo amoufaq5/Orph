@@ -10,7 +10,7 @@ except ImportError:
     if ROOT not in sys.path: sys.path.insert(0, ROOT)
     from src.data_prep.scrapers.base import Scraper, req_json
 
-# DailyMed SPLs listing; docs: https://dailymed.nlm.nih.gov/dailymed/app-support-web-services.cfm
+# DailyMed SPL listing (JSON). Docs: https://dailymed.nlm.nih.gov/dailymed/app-support-web-services.cfm
 BASE = "https://dailymed.nlm.nih.gov/dailymed/services/v2/spls.json"
 
 class DailyMedScraper(Scraper):
