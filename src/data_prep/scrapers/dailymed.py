@@ -1,66 +1,53 @@
-import argparse, requests, time
-from typing import Iterator, Dict
-from .base import Scraper, mk_id
+# src/data_prep/scrapers/dailymed.py
+from __future__ import annotations
+import os, sys, time, json
+from typing import Iterator, Dict, Any
 
-INDEX_API = "https://dailymed.nlm.nih.gov/dailymed/services/v2/spls.json"
-SPL_API   = "https://dailymed.nlm.nih.gov/dailymed/services/v2/spls/{setid}.json"
+try:
+    from .base import Scraper, req_json
+except ImportError:
+    ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+    if ROOT not in sys.path: sys.path.insert(0, ROOT)
+    from src.data_prep.scrapers.base import Scraper, req_json
 
-def list_spls(skip=0, limit=100):
-    r = requests.get(INDEX_API, params={"pagesize":limit, "page": skip//limit + 1}, timeout=45)
-    r.raise_for_status(); time.sleep(0.2)
-    js = r.json()
-    items = js.get("data", [])
-    return items
-
-def get_spl(setid: str) -> dict:
-    r = requests.get(SPL_API.format(setid=setid), timeout=45)
-    r.raise_for_status(); time.sleep(0.2)
-    return r.json()
-
-def to_row(spl: dict) -> Dict:
-    data = spl.get("data", {})
-    title = data.get("title","")
-    sections = {sec.get("code",""): sec.get("text","") for sec in data.get("sections", [])}
-    indications = sections.get("34067-9","") or sections.get("34067-9 Indications & Usage","")
-    ddix = sections.get("34073-7","")  # Interactions if present
-    txt = f"{title}. Indications: {indications[:600]}. Interactions: {ddix[:600]}"
-    return {
-        "id": mk_id("dailymed"),
-        "modality": ["text"],
-        "task": "ddi",
-        "text": txt,
-        "answer": None,
-        "rationale": None,
-        "labels": {},
-        "meta": {"source":"dailymed","license":"public-domain"},
-        "split":"train"
-    }
+# DailyMed SPLs listing; docs: https://dailymed.nlm.nih.gov/dailymed/app-support-web-services.cfm
+BASE = "https://dailymed.nlm.nih.gov/dailymed/services/v2/spls.json"
 
 class DailyMedScraper(Scraper):
-    name = "dailymed"
-    def __init__(self, out_dir: str, max_docs: int):
-        super().__init__(out_dir); self.max_docs = max_docs
+    def __init__(self, out_dir: str, page_size: int = 100, max_pages: int = 500):
+        super().__init__(out_dir)
+        self.page_size = max(1, min(page_size, 1000))
+        self.max_pages = max_pages
 
-    def stream(self) -> Iterator[Dict]:
-        skip, seen = 0, 0
-        while True:
-            items = list_spls(skip)
-            if not items: break
-            for it in items:
-                setid = it.get("setid")
-                if not setid: continue
-                try:
-                    spl = get_spl(setid)
-                    yield to_row(spl)
-                    seen += 1
-                    if self.max_docs and seen >= self.max_docs: return
-                except Exception:
-                    continue
-            skip += 100
+    def stream(self) -> Iterator[Dict[str, Any]]:
+        page = 1
+        while page <= self.max_pages:
+            p = {"page": page, "pagesize": self.page_size}
+            js = req_json(BASE, p, min_sleep=0.25)
+            data = js.get("data", [])
+            if not data:
+                break
+            for item in data:
+                yield {
+                    "setid": item.get("setid"),
+                    "title": item.get("title"),
+                    "effective_time": item.get("effective_time"),
+                    "spl_version": item.get("spl_version"),
+                    "source": "dailymed_spl",
+                }
+            page += 1
+            time.sleep(0.25)
 
 if __name__ == "__main__":
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--out", required=True)
-    ap.add_argument("--max_docs", type=int, default=1000)
-    args = ap.parse_args()
-    DailyMedScraper(args.out, args.max_docs).run()
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--out", required=True)
+    parser.add_argument("--page_size", type=int, default=100)
+    parser.add_argument("--max_pages", type=int, default=500)
+    args = parser.parse_args()
+
+    path = os.path.join(args.out, "dailymed_spls.jsonl")
+    os.makedirs(args.out, exist_ok=True)
+    with open(path, "a", encoding="utf-8") as f:
+        for row in DailyMedScraper(args.out, args.page_size, args.max_pages).stream():
+            f.write(json.dumps(row, ensure_ascii=False) + "\n")
