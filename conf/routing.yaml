@@ -1,0 +1,22 @@
+tools:
+  ddi_checker:
+    enabled: true
+    path: "src/tools/ddi_checker.py"
+  calculators:
+    bmi:
+      enabled: true
+      path: "src/tools/calculators/bmi.py"
+
+routing:
+  patient:
+    use_rag: true
+    use_ddi: true
+  clinician:
+    use_rag: true
+    use_ddi: true
+  pharma:
+    use_rag: true
+    use_ddi: false
+  student:
+    use_rag: true
+    use_ddi: false
